@@ -1,15 +1,51 @@
+# Gradle
+.gradle/
+/build/
+/app/build/
+/captures/
+/.externalNativeBuild/
+/.cxx/
+
+# Android Studio / IntelliJ
 *.iml
-.gradle
-/local.properties
 /.idea/caches
 /.idea/libraries
 /.idea/modules.xml
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+/.idea/deploymentTargetSelector.xml
+/.idea/deploymentTargetDropDown.xml
+/.idea/appInsightsSettings.xml
+/.idea/compiler.xml
+/.idea/gradle.xml
+/.idea/misc.xml
+/.idea/kotlinc.xml
+
+# Secrets / local config — 절대 커밋하지 말 것
 local.properties
+/app/google-services.json
+/app/release
+keystore.properties
+*.jks
+*.keystore
+*.p8
+*.p12
+*.pem
+
+# Kotlin
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / diagnostics
+*.log
+*.hprof
+lint-results*.html
+lint-results*.xml
+
+# IDE misc
+*.swp
+*.swo
