@@ -9,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -30,7 +31,7 @@ import kotlin.coroutines.resumeWithException
  * Media3 Transformer 래퍼.
  *
  * - [export]         : 단일 트림 + 비율 변환 + 자막 번인 (숏츠 재활용).
- * - [exportTimeline] : 여러 세그먼트를 concat + source-time 자막을 출력 기준으로 재매핑.
+ * - [exportTimeline] : 여러 세그먼트 concat + 멀티 레이어 자막/텍스트 + 전환 + BGM.
  */
 @UnstableApi
 class VideoEditor(
@@ -77,8 +78,11 @@ class VideoEditor(
     }
 
     /**
-     * 여러 세그먼트를 이어붙여 export. 자막은 source-time 기준으로 저장돼 있다가
-     * 출력 타임라인 시각으로 재계산해 번인.
+     * 타임라인 기반 export.
+     * - 세그먼트들을 concat
+     * - 자막(style별 그룹) 과 텍스트 레이어를 멀티 오버레이로 합성
+     * - TransitionSettings.enabled 이면 세그먼트 경계에서 페이드-투-블랙
+     * - AudioTrack 이 있으면 원본 오디오 제거 + BGM sequence 추가
      */
     suspend fun exportTimeline(
         sourceUri: Uri,
@@ -90,7 +94,8 @@ class VideoEditor(
             require(timeline.segments.isNotEmpty()) { "빈 타임라인은 export 불가" }
             val outFile = File(outputDir, "edit_${System.currentTimeMillis()}.mp4")
 
-            val editedItems = timeline.segments.map { seg ->
+            val removeOriginalAudio = timeline.audioTrack?.replaceOriginal == true
+            val videoItems = timeline.segments.map { seg ->
                 val mediaItem = MediaItem.Builder()
                     .setUri(sourceUri)
                     .setClippingConfiguration(
@@ -100,15 +105,39 @@ class VideoEditor(
                             .build()
                     )
                     .build()
-                EditedMediaItem.Builder(mediaItem).build()
+                EditedMediaItem.Builder(mediaItem)
+                    .setRemoveAudio(removeOriginalAudio)
+                    .build()
+            }
+            val videoSequence = EditedMediaItemSequence(videoItems)
+
+            val sequences = mutableListOf(videoSequence)
+
+            // BGM: 영상 전체 길이에 맞춰 한 번만 재생 (필요 시 loop)
+            timeline.audioTrack?.let { track ->
+                val bgmItem = EditedMediaItem.Builder(
+                    MediaItem.fromUri(track.uri)
+                ).setRemoveVideo(true).build()
+                sequences += EditedMediaItemSequence(listOf(bgmItem), /* isLooping = */ true)
             }
 
-            val sequence = EditedMediaItemSequence(editedItems)
-            val outputCues = timeline.toOutputCues()
-            val compEffects = buildCompositionEffects(aspectRatio, outputCues)
+            val overlays = buildOverlayList(timeline)
+            val videoEffects = ImmutableList.Builder<Effect>().apply {
+                aspectRatio?.let {
+                    add(
+                        Presentation.createForAspectRatio(
+                            it,
+                            Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP,
+                        )
+                    )
+                }
+                if (overlays.isNotEmpty()) {
+                    add(OverlayEffect(ImmutableList.copyOf(overlays)))
+                }
+            }.build()
 
-            val composition = Composition.Builder(listOf(sequence))
-                .setEffects(Effects(emptyList(), compEffects))
+            val composition = Composition.Builder(sequences.toList())
+                .setEffects(Effects(emptyList(), videoEffects))
                 .build()
 
             val transformer = Transformer.Builder(context).build()
@@ -147,37 +176,84 @@ class VideoEditor(
         return builder.build()
     }
 
-    private fun buildCompositionEffects(
-        aspectRatio: Float?,
-        outputCues: List<Cue>,
-    ): ImmutableList<Effect> {
-        val builder = ImmutableList.Builder<Effect>()
-        aspectRatio?.let { ratio ->
-            builder.add(
-                Presentation.createForAspectRatio(
-                    ratio,
-                    Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP,
-                )
+    /**
+     * 타임라인으로부터 프레임 오버레이 리스트 생성.
+     * - 같은 스타일의 자막은 하나의 CaptionOverlay 로 묶음
+     * - 텍스트 레이어도 각자 CaptionOverlay 로 추가
+     * - 전환이 켜져 있으면 FadeAtBoundariesOverlay 추가
+     */
+    private fun buildOverlayList(timeline: Timeline): List<TextureOverlay> {
+        val overlays = mutableListOf<TextureOverlay>()
+
+        // 자막: style 별 그룹핑 → 그룹마다 CaptionOverlay
+        val captionCuesByStyle = timeline.captionsToOutputCuesByStyle()
+        for ((style, cues) in captionCuesByStyle) {
+            if (cues.isNotEmpty()) {
+                overlays += CaptionOverlay(cues, style)
+            }
+        }
+
+        // 텍스트 레이어: 레이어별 (style 이 다양할 수 있어서) 각자 오버레이
+        val textLayerOutputs = timeline.textLayersToOutputs()
+        for ((style, cues) in textLayerOutputs) {
+            if (cues.isNotEmpty()) {
+                overlays += CaptionOverlay(cues, style)
+            }
+        }
+
+        // 전환
+        if (timeline.transitions.enabled && timeline.segments.size > 1) {
+            val boundaries = mutableListOf<Long>()
+            var acc = 0L
+            for (i in 0 until timeline.segments.size - 1) {
+                acc += timeline.segments[i].durationMs
+                boundaries += acc
+            }
+            overlays += FadeAtBoundariesOverlay(
+                boundariesMs = boundaries,
+                halfDurationMs = (timeline.transitions.durationMs / 2).coerceAtLeast(50L),
             )
         }
-        if (outputCues.isNotEmpty()) {
-            builder.add(OverlayEffect(ImmutableList.of(CaptionOverlay(outputCues))))
-        }
-        return builder.build()
+
+        return overlays
     }
 
     /**
-     * source-time 자막 → 출력 타임라인 기준으로 재계산.
-     * 한 자막이 여러 세그먼트에 걸치면 조각으로 나뉨.
+     * 자막을 스타일별로 그룹핑해 각 그룹을 출력 시간 기준 Cue 로 변환.
      */
-    private fun Timeline.toOutputCues(): List<Cue> {
-        if (captions.isEmpty()) return emptyList()
+    private fun Timeline.captionsToOutputCuesByStyle(): Map<CaptionStyle, List<Cue>> {
+        if (captions.isEmpty()) return emptyMap()
+        val groups = captions.groupBy { it.style }
+        return groups.mapValues { (_, caps) ->
+            captionsToOutputCues(caps.map { it.sourceStartMs to it.sourceEndMs to it.text })
+        }
+    }
+
+    /**
+     * 텍스트 레이어 → 스타일별 출력 Cue.
+     */
+    private fun Timeline.textLayersToOutputs(): Map<CaptionStyle, List<Cue>> {
+        if (textLayers.isEmpty()) return emptyMap()
+        val groups = textLayers.groupBy { it.style }
+        return groups.mapValues { (_, layers) ->
+            captionsToOutputCues(layers.map { it.sourceStartMs to it.sourceEndMs to it.text })
+        }
+    }
+
+    /**
+     * (sourceStart, sourceEnd, text) 리스트를 현재 세그먼트 구성에 맞춰 출력 Cue 로 변환.
+     * 한 입력이 여러 세그먼트에 걸치면 조각으로 분리됨.
+     */
+    private fun Timeline.captionsToOutputCues(
+        inputs: List<Pair<Pair<Long, Long>, String>>,
+    ): List<Cue> {
         val result = mutableListOf<Cue>()
         var accumulated = 0L
         for (seg in segments) {
-            for (cap in captions) {
-                val overlapStart = maxOf(cap.sourceStartMs, seg.sourceStartMs)
-                val overlapEnd = minOf(cap.sourceEndMs, seg.sourceEndMs)
+            for ((range, text) in inputs) {
+                val (srcStart, srcEnd) = range
+                val overlapStart = maxOf(srcStart, seg.sourceStartMs)
+                val overlapEnd = minOf(srcEnd, seg.sourceEndMs)
                 if (overlapEnd > overlapStart) {
                     val outStart = accumulated + (overlapStart - seg.sourceStartMs)
                     val outEnd = accumulated + (overlapEnd - seg.sourceStartMs)
@@ -185,7 +261,7 @@ class VideoEditor(
                         index = result.size + 1,
                         startMs = outStart,
                         endMs = outEnd,
-                        text = cap.text,
+                        text = text,
                     )
                 }
             }

@@ -13,12 +13,16 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.StudioPopApp
 import com.mingeek.studiopop.data.caption.Srt
+import com.mingeek.studiopop.data.editor.AudioTrack
+import com.mingeek.studiopop.data.editor.CaptionStyle
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
+import com.mingeek.studiopop.data.editor.TextLayer
 import com.mingeek.studiopop.data.editor.Timeline
 import com.mingeek.studiopop.data.editor.TimelineCaption
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AssetType
 import com.mingeek.studiopop.data.project.ProjectRepository
+import com.mingeek.studiopop.ui.editor.components.EditableTextItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +38,8 @@ sealed interface ExportPhase {
     data class Error(val message: String) : ExportPhase
 }
 
+enum class EditKind { CAPTION, TEXT_LAYER }
+
 data class EditorUiState(
     val videoUri: Uri? = null,
     val sourceDurationMs: Long = 0L,
@@ -43,7 +49,8 @@ data class EditorUiState(
     val isPlaying: Boolean = false,
     val seekRequest: Long? = null,
     val selectedSegmentId: String? = null,
-    val editingCaption: TimelineCaption? = null,
+    val editingItem: EditableTextItem? = null,
+    val editingKind: EditKind? = null,
     val phase: ExportPhase = ExportPhase.Idle,
 ) {
     val canExport: Boolean
@@ -95,7 +102,6 @@ class EditorViewModel(
                 phase = ExportPhase.Idle,
             )
         }
-        // 썸네일 스트립은 백그라운드에서 생성
         viewModelScope.launch {
             val strip = frameStripGenerator.generate(uri, duration)
             _uiState.update { it.copy(frameStrip = strip) }
@@ -173,44 +179,133 @@ class EditorViewModel(
         }
     }
 
-    // --- 자막 조작 ---
+    // --- 자막 (CAPTION) ---
     fun openCaptionEditorForNew() {
         val state = _uiState.value
         val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs)
             ?: return
-        val srcEnd = (sourceT + DEFAULT_NEW_CAPTION_MS).coerceAtMost(seg.sourceEndMs)
+        val srcEnd = (sourceT + DEFAULT_NEW_DURATION_MS).coerceAtMost(seg.sourceEndMs)
+        val cap = TimelineCaption(
+            sourceStartMs = sourceT,
+            sourceEndMs = srcEnd,
+            text = "",
+        )
         _uiState.update {
             it.copy(
-                editingCaption = TimelineCaption(
-                    sourceStartMs = sourceT,
-                    sourceEndMs = srcEnd,
-                    text = "",
-                )
+                editingItem = cap.toEditable(existsInTimeline = false),
+                editingKind = EditKind.CAPTION,
             )
         }
     }
 
     fun openCaptionEditorFor(id: String) {
         val cap = _uiState.value.timeline.captions.firstOrNull { it.id == id } ?: return
-        _uiState.update { it.copy(editingCaption = cap) }
-    }
-
-    fun closeCaptionEditor() = _uiState.update { it.copy(editingCaption = null) }
-
-    fun saveCaption(caption: TimelineCaption) {
         _uiState.update {
-            val existed = it.timeline.captions.any { c -> c.id == caption.id }
-            val t = if (existed) it.timeline.updateCaption(caption)
-            else it.timeline.addCaption(caption)
-            it.copy(timeline = t, editingCaption = null)
+            it.copy(
+                editingItem = cap.toEditable(existsInTimeline = true),
+                editingKind = EditKind.CAPTION,
+            )
         }
     }
 
-    fun deleteEditingCaption() {
-        val id = _uiState.value.editingCaption?.id ?: return
+    // --- 텍스트 레이어 ---
+    fun openTextLayerEditorForNew() {
+        val state = _uiState.value
+        val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs)
+            ?: return
+        val srcEnd = (sourceT + DEFAULT_NEW_DURATION_MS).coerceAtMost(seg.sourceEndMs)
+        val layer = TextLayer(
+            sourceStartMs = sourceT,
+            sourceEndMs = srcEnd,
+            text = "",
+        )
         _uiState.update {
-            it.copy(timeline = it.timeline.deleteCaption(id), editingCaption = null)
+            it.copy(
+                editingItem = layer.toEditable(existsInTimeline = false),
+                editingKind = EditKind.TEXT_LAYER,
+            )
         }
+    }
+
+    fun openTextLayerEditorFor(id: String) {
+        val layer = _uiState.value.timeline.textLayers.firstOrNull { it.id == id } ?: return
+        _uiState.update {
+            it.copy(
+                editingItem = layer.toEditable(existsInTimeline = true),
+                editingKind = EditKind.TEXT_LAYER,
+            )
+        }
+    }
+
+    fun closeEditor() = _uiState.update { it.copy(editingItem = null, editingKind = null) }
+
+    fun saveEditingItem(updated: EditableTextItem) {
+        val state = _uiState.value
+        val kind = state.editingKind ?: return
+        val newTimeline = when (kind) {
+            EditKind.CAPTION -> {
+                val caption = TimelineCaption(
+                    id = updated.id,
+                    sourceStartMs = updated.sourceStartMs,
+                    sourceEndMs = updated.sourceEndMs,
+                    text = updated.text,
+                    style = updated.style,
+                )
+                if (updated.existsInTimeline) state.timeline.updateCaption(caption)
+                else state.timeline.addCaption(caption)
+            }
+            EditKind.TEXT_LAYER -> {
+                val layer = TextLayer(
+                    id = updated.id,
+                    sourceStartMs = updated.sourceStartMs,
+                    sourceEndMs = updated.sourceEndMs,
+                    text = updated.text,
+                    style = updated.style,
+                )
+                if (updated.existsInTimeline) state.timeline.updateTextLayer(layer)
+                else state.timeline.addTextLayer(layer)
+            }
+        }
+        _uiState.update {
+            it.copy(timeline = newTimeline, editingItem = null, editingKind = null)
+        }
+    }
+
+    fun deleteEditingItem() {
+        val state = _uiState.value
+        val id = state.editingItem?.id ?: return
+        val kind = state.editingKind ?: return
+        val newTimeline = when (kind) {
+            EditKind.CAPTION -> state.timeline.deleteCaption(id)
+            EditKind.TEXT_LAYER -> state.timeline.deleteTextLayer(id)
+        }
+        _uiState.update {
+            it.copy(timeline = newTimeline, editingItem = null, editingKind = null)
+        }
+    }
+
+    // --- 전환 ---
+    fun toggleTransitions() {
+        _uiState.update {
+            val t = it.timeline.transitions.copy(enabled = !it.timeline.transitions.enabled)
+            it.copy(timeline = it.timeline.withTransitions(t))
+        }
+    }
+
+    // --- BGM ---
+    fun onBgmPicked(uri: Uri?) {
+        if (uri == null) return
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.withAudioTrack(
+                    AudioTrack(uri = uri, replaceOriginal = true)
+                )
+            )
+        }
+    }
+
+    fun removeBgm() {
+        _uiState.update { it.copy(timeline = it.timeline.withAudioTrack(null)) }
     }
 
     // --- Export ---
@@ -265,8 +360,26 @@ class EditorViewModel(
         }
     }
 
+    private fun TimelineCaption.toEditable(existsInTimeline: Boolean) = EditableTextItem(
+        id = id,
+        text = text,
+        sourceStartMs = sourceStartMs,
+        sourceEndMs = sourceEndMs,
+        style = style,
+        existsInTimeline = existsInTimeline,
+    )
+
+    private fun TextLayer.toEditable(existsInTimeline: Boolean) = EditableTextItem(
+        id = id,
+        text = text,
+        sourceStartMs = sourceStartMs,
+        sourceEndMs = sourceEndMs,
+        style = style,
+        existsInTimeline = existsInTimeline,
+    )
+
     companion object {
-        private const val DEFAULT_NEW_CAPTION_MS = 2_000L
+        private const val DEFAULT_NEW_DURATION_MS = 2_000L
 
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

@@ -11,16 +11,22 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Animation
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -61,6 +67,10 @@ fun EditorScreen(
     val pickSrtLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri -> viewModel.onSrtPicked(uri) }
+
+    val pickBgmLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri -> viewModel.onBgmPicked(uri) }
 
     Scaffold(
         topBar = {
@@ -126,6 +136,7 @@ fun EditorScreen(
                     onSplit = viewModel::splitAtPlayhead,
                     onDelete = viewModel::deleteSelectedSegment,
                     onAddCaption = viewModel::openCaptionEditorForNew,
+                    onAddTextLayer = viewModel::openTextLayerEditorForNew,
                 )
 
                 Card(
@@ -139,7 +150,7 @@ fun EditorScreen(
                         frameStrip = state.frameStrip,
                         playheadOutputMs = state.playheadOutputMs,
                         selectedSegmentId = state.selectedSegmentId,
-                        selectedCaptionId = state.editingCaption?.id,
+                        selectedCaptionId = state.editingItem?.id,
                         onSegmentTap = { id ->
                             viewModel.selectSegment(if (id == state.selectedSegmentId) null else id)
                         },
@@ -149,39 +160,38 @@ fun EditorScreen(
                     )
                 }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            pickVideoLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                            )
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("영상 변경") }
-                    OutlinedButton(
-                        onClick = { pickSrtLauncher.launch("*/*") },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("SRT 불러오기") }
-                }
+                // Tier 2 옵션들: 전환 / BGM / 영상 교체 / SRT
+                OptionsRow(
+                    transitionsOn = state.timeline.transitions.enabled,
+                    bgmLabel = state.timeline.audioTrack?.uri?.toString()
+                        ?.substringAfterLast('/')
+                        ?: "없음",
+                    textLayerCount = state.timeline.textLayers.size,
+                    onToggleTransitions = viewModel::toggleTransitions,
+                    onPickBgm = { pickBgmLauncher.launch("audio/*") },
+                    onRemoveBgm = viewModel::removeBgm,
+                    onPickSrt = { pickSrtLauncher.launch("*/*") },
+                    onPickVideo = {
+                        pickVideoLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                        )
+                    },
+                )
 
                 PhaseIndicator(phase = state.phase, onDismiss = viewModel::dismissMessage)
             }
         }
     }
 
-    state.editingCaption?.let { cap ->
+    state.editingItem?.let { item ->
+        val kind = state.editingKind ?: EditKind.CAPTION
+        val title = if (kind == EditKind.CAPTION) "자막 편집" else "텍스트 레이어 편집"
         CaptionEditorSheet(
-            caption = cap,
-            onDismiss = viewModel::closeCaptionEditor,
-            onSave = viewModel::saveCaption,
-            onDelete = if (state.timeline.captions.any { it.id == cap.id }) {
-                { viewModel.deleteEditingCaption() }
-            } else null,
+            item = item,
+            title = title,
+            onDismiss = viewModel::closeEditor,
+            onSave = viewModel::saveEditingItem,
+            onDelete = if (item.existsInTimeline) { { viewModel.deleteEditingItem() } } else null,
         )
     }
 }
@@ -199,7 +209,7 @@ private fun EmptyVideoPicker(onPick: () -> Unit, onPickSrt: () -> Unit) {
         )
         Text(
             "갤러리에서 영상을 선택하면 썸네일 타임라인이 생성됩니다. " +
-                    "이어서 분할·삭제·자막 추가를 할 수 있어요.",
+                    "이어서 분할·삭제·자막·텍스트·전환·BGM 을 적용할 수 있어요.",
             style = MaterialTheme.typography.bodySmall,
         )
         OutlinedButton(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
@@ -221,10 +231,12 @@ private fun ToolbarRow(
     onSplit: () -> Unit,
     onDelete: () -> Unit,
     onAddCaption: () -> Unit,
+    onAddTextLayer: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -249,8 +261,64 @@ private fun ToolbarRow(
             Text(" 삭제", modifier = Modifier.padding(start = 4.dp))
         }
         FilledTonalButton(onClick = onAddCaption) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
+            Icon(Icons.Filled.Subtitles, contentDescription = null)
             Text(" 자막", modifier = Modifier.padding(start = 4.dp))
+        }
+        FilledTonalButton(onClick = onAddTextLayer) {
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Text(" 텍스트", modifier = Modifier.padding(start = 4.dp))
+        }
+    }
+}
+
+@Composable
+private fun OptionsRow(
+    transitionsOn: Boolean,
+    bgmLabel: String,
+    textLayerCount: Int,
+    onToggleTransitions: () -> Unit,
+    onPickBgm: () -> Unit,
+    onRemoveBgm: () -> Unit,
+    onPickSrt: () -> Unit,
+    onPickVideo: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(
+                selected = transitionsOn,
+                onClick = onToggleTransitions,
+                label = { Text("전환") },
+                leadingIcon = { Icon(Icons.Outlined.Animation, contentDescription = null) },
+            )
+            FilterChip(
+                selected = bgmLabel != "없음",
+                onClick = onPickBgm,
+                label = { Text("BGM: $bgmLabel") },
+                leadingIcon = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
+            )
+            if (bgmLabel != "없음") {
+                OutlinedButton(onClick = onRemoveBgm) { Text("해제") }
+            }
+            if (textLayerCount > 0) {
+                FilterChip(
+                    selected = true,
+                    onClick = {},
+                    label = { Text("텍스트 레이어 $textLayerCount") },
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = onPickVideo, modifier = Modifier.weight(1f)) {
+                Text("영상 변경")
+            }
+            OutlinedButton(onClick = onPickSrt, modifier = Modifier.weight(1f)) {
+                Text("SRT 불러오기")
+            }
         }
     }
 }

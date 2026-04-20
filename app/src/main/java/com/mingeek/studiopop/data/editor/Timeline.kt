@@ -23,6 +23,20 @@ data class TimelineCaption(
     val sourceStartMs: Long,
     val sourceEndMs: Long,
     val text: String,
+    val style: CaptionStyle = CaptionStyle.DEFAULT,
+)
+
+/**
+ * 영상 위에 올라가는 독립 텍스트 레이어.
+ * 자막(TimelineCaption) 과 달리 "타이틀/CTA/강조" 등 화면 구성용 오버레이.
+ * 시각은 자막과 같은 방식(source-time) 으로 저장.
+ */
+data class TextLayer(
+    val id: String = UUID.randomUUID().toString(),
+    val sourceStartMs: Long,
+    val sourceEndMs: Long,
+    val text: String,
+    val style: CaptionStyle = CaptionStyle.DEFAULT.copy(anchorY = 0.8f), // 기본 상단
 )
 
 /**
@@ -31,6 +45,9 @@ data class TimelineCaption(
 data class Timeline(
     val segments: List<TimelineSegment>,
     val captions: List<TimelineCaption> = emptyList(),
+    val textLayers: List<TextLayer> = emptyList(),
+    val transitions: TransitionSettings = TransitionSettings(),
+    val audioTrack: AudioTrack? = null,
 ) {
 
     val outputDurationMs: Long
@@ -97,6 +114,18 @@ data class Timeline(
     fun deleteCaption(id: String): Timeline =
         copy(captions = captions.filter { it.id != id })
 
+    fun addTextLayer(layer: TextLayer): Timeline =
+        copy(textLayers = textLayers + layer)
+
+    fun updateTextLayer(layer: TextLayer): Timeline =
+        copy(textLayers = textLayers.map { if (it.id == layer.id) layer else it })
+
+    fun deleteTextLayer(id: String): Timeline =
+        copy(textLayers = textLayers.filter { it.id != id })
+
+    fun withTransitions(t: TransitionSettings): Timeline = copy(transitions = t)
+    fun withAudioTrack(a: AudioTrack?): Timeline = copy(audioTrack = a)
+
     /**
      * 원본 영상 전체를 한 세그먼트로 담은 초기 타임라인.
      */
@@ -110,3 +139,21 @@ data class Timeline(
             )
     }
 }
+
+/**
+ * 세그먼트 사이 전환 설정. 현재는 페이드-투-블랙 하나만 지원.
+ */
+data class TransitionSettings(
+    val enabled: Boolean = false,
+    val durationMs: Long = 400L,
+)
+
+/**
+ * BGM(또는 다른 오디오) 트랙.
+ * replaceOriginal = true 이면 영상의 원본 오디오는 제거하고 BGM 만 사용 (Phase 7 MVP).
+ * 볼륨 믹싱은 Phase 8 에서.
+ */
+data class AudioTrack(
+    val uri: android.net.Uri,
+    val replaceOriginal: Boolean = true,
+)
