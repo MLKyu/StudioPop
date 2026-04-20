@@ -11,13 +11,14 @@ import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
-import com.mingeek.studiopop.data.caption.Cue
 import com.google.common.collect.ImmutableList
+import com.mingeek.studiopop.data.caption.Cue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -26,7 +27,10 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * Media3 Transformer 기반 영상 트림 + 자막 번인 내보내기.
+ * Media3 Transformer 래퍼.
+ *
+ * - [export]         : 단일 트림 + 비율 변환 + 자막 번인 (숏츠 재활용).
+ * - [exportTimeline] : 여러 세그먼트를 concat + source-time 자막을 출력 기준으로 재매핑.
  */
 @UnstableApi
 class VideoEditor(
@@ -38,15 +42,7 @@ class VideoEditor(
         val sourceUri: Uri,
         val trimStartMs: Long,
         val trimEndMs: Long,
-        /**
-         * 번인할 자막 큐. 시각은 **원본 영상 기준**.
-         * null/빈 리스트이면 자막 없이 내보냄.
-         */
         val captionCues: List<Cue>? = null,
-        /**
-         * 목표 비율 (가로/세로). 예: 9/16f = 숏츠.
-         * null 이면 원본 비율 유지. 비-null 이면 center-crop 방식으로 변환.
-         */
         val aspectRatio: Float? = null,
     )
 
@@ -55,10 +51,7 @@ class VideoEditor(
         onProgress: (Float) -> Unit = {},
     ): Result<File> = withContext(Dispatchers.Main) {
         runCatching {
-            val outFile = File(
-                outputDir,
-                "edit_${System.currentTimeMillis()}.mp4",
-            )
+            val outFile = File(outputDir, "edit_${System.currentTimeMillis()}.mp4")
 
             val mediaItem = MediaItem.Builder()
                 .setUri(spec.sourceUri)
@@ -70,23 +63,64 @@ class VideoEditor(
                 )
                 .build()
 
-            val videoEffects: ImmutableList<Effect> = buildVideoEffects(spec)
-
+            val videoEffects: ImmutableList<Effect> = buildSimpleVideoEffects(spec)
             val editedMediaItem = EditedMediaItem.Builder(mediaItem)
                 .setEffects(Effects(emptyList(), videoEffects))
                 .build()
 
             val transformer = Transformer.Builder(context).build()
-
-            awaitExport(transformer, editedMediaItem, outFile, onProgress)
+            awaitExport(transformer, outFile, onProgress) {
+                transformer.start(editedMediaItem, outFile.absolutePath)
+            }
             outFile
         }
     }
 
-    private fun buildVideoEffects(spec: EditSpec): ImmutableList<Effect> {
-        val builder = ImmutableList.Builder<Effect>()
+    /**
+     * 여러 세그먼트를 이어붙여 export. 자막은 source-time 기준으로 저장돼 있다가
+     * 출력 타임라인 시각으로 재계산해 번인.
+     */
+    suspend fun exportTimeline(
+        sourceUri: Uri,
+        timeline: Timeline,
+        aspectRatio: Float? = null,
+        onProgress: (Float) -> Unit = {},
+    ): Result<File> = withContext(Dispatchers.Main) {
+        runCatching {
+            require(timeline.segments.isNotEmpty()) { "빈 타임라인은 export 불가" }
+            val outFile = File(outputDir, "edit_${System.currentTimeMillis()}.mp4")
 
-        // 1) 비율 변환 (자막 오버레이보다 먼저 적용해야 크롭 후 영역에 자막이 올라감)
+            val editedItems = timeline.segments.map { seg ->
+                val mediaItem = MediaItem.Builder()
+                    .setUri(sourceUri)
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(seg.sourceStartMs)
+                            .setEndPositionMs(seg.sourceEndMs)
+                            .build()
+                    )
+                    .build()
+                EditedMediaItem.Builder(mediaItem).build()
+            }
+
+            val sequence = EditedMediaItemSequence(editedItems)
+            val outputCues = timeline.toOutputCues()
+            val compEffects = buildCompositionEffects(aspectRatio, outputCues)
+
+            val composition = Composition.Builder(listOf(sequence))
+                .setEffects(Effects(emptyList(), compEffects))
+                .build()
+
+            val transformer = Transformer.Builder(context).build()
+            awaitExport(transformer, outFile, onProgress) {
+                transformer.start(composition, outFile.absolutePath)
+            }
+            outFile
+        }
+    }
+
+    private fun buildSimpleVideoEffects(spec: EditSpec): ImmutableList<Effect> {
+        val builder = ImmutableList.Builder<Effect>()
         spec.aspectRatio?.let { ratio ->
             builder.add(
                 Presentation.createForAspectRatio(
@@ -95,8 +129,6 @@ class VideoEditor(
                 )
             )
         }
-
-        // 2) 자막 번인 (트림 기준으로 오프셋 보정한 큐)
         val cues = spec.captionCues.orEmpty()
         if (cues.isNotEmpty()) {
             val shifted = cues
@@ -112,15 +144,61 @@ class VideoEditor(
                 builder.add(OverlayEffect(ImmutableList.of(CaptionOverlay(shifted))))
             }
         }
-
         return builder.build()
+    }
+
+    private fun buildCompositionEffects(
+        aspectRatio: Float?,
+        outputCues: List<Cue>,
+    ): ImmutableList<Effect> {
+        val builder = ImmutableList.Builder<Effect>()
+        aspectRatio?.let { ratio ->
+            builder.add(
+                Presentation.createForAspectRatio(
+                    ratio,
+                    Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP,
+                )
+            )
+        }
+        if (outputCues.isNotEmpty()) {
+            builder.add(OverlayEffect(ImmutableList.of(CaptionOverlay(outputCues))))
+        }
+        return builder.build()
+    }
+
+    /**
+     * source-time 자막 → 출력 타임라인 기준으로 재계산.
+     * 한 자막이 여러 세그먼트에 걸치면 조각으로 나뉨.
+     */
+    private fun Timeline.toOutputCues(): List<Cue> {
+        if (captions.isEmpty()) return emptyList()
+        val result = mutableListOf<Cue>()
+        var accumulated = 0L
+        for (seg in segments) {
+            for (cap in captions) {
+                val overlapStart = maxOf(cap.sourceStartMs, seg.sourceStartMs)
+                val overlapEnd = minOf(cap.sourceEndMs, seg.sourceEndMs)
+                if (overlapEnd > overlapStart) {
+                    val outStart = accumulated + (overlapStart - seg.sourceStartMs)
+                    val outEnd = accumulated + (overlapEnd - seg.sourceStartMs)
+                    result += Cue(
+                        index = result.size + 1,
+                        startMs = outStart,
+                        endMs = outEnd,
+                        text = cap.text,
+                    )
+                }
+            }
+            accumulated += seg.durationMs
+        }
+        return result.sortedBy { it.startMs }
     }
 
     private suspend fun awaitExport(
         transformer: Transformer,
-        editedMediaItem: EditedMediaItem,
         outFile: File,
         onProgress: (Float) -> Unit,
+        start: () -> Unit,
     ): ExportResult = suspendCancellableCoroutine { cont ->
         val handler = Handler(Looper.getMainLooper())
         val progressHolder = ProgressHolder()
@@ -155,7 +233,7 @@ class VideoEditor(
         }
 
         transformer.addListener(listener)
-        transformer.start(editedMediaItem, outFile.absolutePath)
+        start()
         handler.postDelayed(progressRunnable, PROGRESS_POLL_MS)
 
         cont.invokeOnCancellation {

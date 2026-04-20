@@ -8,6 +8,7 @@ import com.mingeek.studiopop.data.caption.AudioChunker
 import com.mingeek.studiopop.data.caption.AudioExtractor
 import com.mingeek.studiopop.data.caption.ChunkedTranscriber
 import com.mingeek.studiopop.data.caption.WhisperClient
+import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AppDatabase
 import com.mingeek.studiopop.data.project.ProjectRepository
@@ -91,6 +92,8 @@ class AppContainer(context: Context) {
             outputDir = appContext.getExternalFilesDir(null) ?: appContext.filesDir,
         )
     }
+
+    val frameStripGenerator: FrameStripGenerator by lazy { FrameStripGenerator(appContext) }
 
     val frameExtractor: FrameExtractor by lazy { FrameExtractor(appContext) }
 

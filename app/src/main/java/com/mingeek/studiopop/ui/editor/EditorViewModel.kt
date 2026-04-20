@@ -1,18 +1,21 @@
 package com.mingeek.studiopop.ui.editor
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import androidx.core.net.toUri
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.StudioPopApp
-import com.mingeek.studiopop.data.caption.Cue
 import com.mingeek.studiopop.data.caption.Srt
+import com.mingeek.studiopop.data.editor.FrameStripGenerator
+import com.mingeek.studiopop.data.editor.Timeline
+import com.mingeek.studiopop.data.editor.TimelineCaption
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AssetType
 import com.mingeek.studiopop.data.project.ProjectRepository
@@ -33,21 +36,27 @@ sealed interface ExportPhase {
 
 data class EditorUiState(
     val videoUri: Uri? = null,
-    val durationMs: Long = 0L,
-    val trimStartMs: Long = 0L,
-    val trimEndMs: Long = 0L,
-    val srtUri: Uri? = null,
-    val cues: List<Cue> = emptyList(),
+    val sourceDurationMs: Long = 0L,
+    val timeline: Timeline = Timeline(segments = emptyList()),
+    val frameStrip: List<Bitmap> = emptyList(),
+    val playheadOutputMs: Long = 0L,
+    val isPlaying: Boolean = false,
+    val seekRequest: Long? = null,
+    val selectedSegmentId: String? = null,
+    val editingCaption: TimelineCaption? = null,
     val phase: ExportPhase = ExportPhase.Idle,
 ) {
     val canExport: Boolean
-        get() = videoUri != null && trimEndMs > trimStartMs && phase !is ExportPhase.Running
+        get() = videoUri != null &&
+                timeline.segments.isNotEmpty() &&
+                phase !is ExportPhase.Running
 }
 
 @UnstableApi
 class EditorViewModel(
     application: Application,
     private val videoEditor: VideoEditor,
+    private val frameStripGenerator: FrameStripGenerator,
     private val projectRepository: ProjectRepository,
 ) : AndroidViewModel(application) {
 
@@ -61,81 +70,166 @@ class EditorViewModel(
         projectId = id
         viewModelScope.launch {
             val project = projectRepository.getProject(id) ?: return@launch
-            onVideoSelected(project.sourceVideoUri.toUri())
-            // 가장 최근에 만든 자막이 있으면 자동 불러오기
+            loadVideo(project.sourceVideoUri.toUri())
             val srtAsset = projectRepository.latestAsset(id, AssetType.CAPTION_SRT)
-            if (srtAsset != null) {
-                onSrtSelected(java.io.File(srtAsset.value).toUri())
-            }
+            srtAsset?.let { importSrtFromPath(it.value) }
         }
     }
 
     fun onVideoSelected(uri: Uri?) {
         if (uri == null) return
-        viewModelScope.launch {
-            val duration = withContext(Dispatchers.IO) { readDurationMs(uri) }
-            _uiState.update {
-                it.copy(
-                    videoUri = uri,
-                    durationMs = duration,
-                    trimStartMs = 0L,
-                    trimEndMs = duration,
-                    phase = ExportPhase.Idle,
-                )
-            }
-        }
+        viewModelScope.launch { loadVideo(uri) }
     }
 
-    fun onTrimChange(startMs: Long, endMs: Long) {
+    private suspend fun loadVideo(uri: Uri) {
+        val duration = withContext(Dispatchers.IO) { readDurationMs(uri) }
         _uiState.update {
             it.copy(
-                trimStartMs = startMs.coerceIn(0L, it.durationMs),
-                trimEndMs = endMs.coerceIn(startMs, it.durationMs),
+                videoUri = uri,
+                sourceDurationMs = duration,
+                timeline = Timeline.single(duration),
+                playheadOutputMs = 0L,
+                isPlaying = false,
+                selectedSegmentId = null,
+                frameStrip = emptyList(),
+                phase = ExportPhase.Idle,
             )
+        }
+        // 썸네일 스트립은 백그라운드에서 생성
+        viewModelScope.launch {
+            val strip = frameStripGenerator.generate(uri, duration)
+            _uiState.update { it.copy(frameStrip = strip) }
         }
     }
 
-    fun onSrtSelected(uri: Uri?) {
+    fun onSrtPicked(uri: Uri?) {
+        if (uri == null) return
         viewModelScope.launch {
-            if (uri == null) {
-                _uiState.update { it.copy(srtUri = null, cues = emptyList()) }
-                return@launch
-            }
-            val cues = withContext(Dispatchers.IO) {
+            val text = withContext(Dispatchers.IO) {
                 runCatching {
                     getApplication<Application>().contentResolver.openInputStream(uri)
                         ?.bufferedReader()?.use { it.readText() }
                         ?: ""
-                }.map(Srt::parse).getOrDefault(emptyList())
+                }.getOrDefault("")
             }
-            _uiState.update { it.copy(srtUri = uri, cues = cues) }
+            if (text.isNotBlank()) importSrtText(text)
         }
     }
 
+    private fun importSrtFromPath(path: String) {
+        val text = runCatching { java.io.File(path).readText() }.getOrNull() ?: return
+        importSrtText(text)
+    }
+
+    private fun importSrtText(text: String) {
+        val cues = Srt.parse(text)
+        val timelineCaptions = cues.map {
+            TimelineCaption(
+                sourceStartMs = it.startMs,
+                sourceEndMs = it.endMs,
+                text = it.text,
+            )
+        }
+        _uiState.update { state ->
+            state.copy(timeline = state.timeline.copy(captions = timelineCaptions))
+        }
+    }
+
+    // --- 재생 제어 ---
+    fun togglePlay() = _uiState.update { it.copy(isPlaying = !it.isPlaying) }
+
+    fun onPlayheadChange(outputMs: Long) {
+        _uiState.update { it.copy(playheadOutputMs = outputMs) }
+    }
+
+    fun onPlayheadDragged(outputMs: Long) {
+        _uiState.update {
+            it.copy(playheadOutputMs = outputMs, seekRequest = outputMs, isPlaying = false)
+        }
+    }
+
+    fun consumeSeekRequest() = _uiState.update { it.copy(seekRequest = null) }
+
+    // --- 세그먼트 조작 ---
+    fun selectSegment(id: String?) = _uiState.update { it.copy(selectedSegmentId = id) }
+
+    fun splitAtPlayhead() {
+        _uiState.update {
+            it.copy(timeline = it.timeline.splitAtOutputMs(it.playheadOutputMs))
+        }
+    }
+
+    fun deleteSelectedSegment() {
+        val id = _uiState.value.selectedSegmentId ?: return
+        _uiState.update {
+            val newTimeline = it.timeline.deleteSegment(id)
+            val newPlayhead = it.playheadOutputMs.coerceAtMost(newTimeline.outputDurationMs)
+            it.copy(
+                timeline = newTimeline,
+                playheadOutputMs = newPlayhead,
+                seekRequest = newPlayhead,
+                selectedSegmentId = null,
+            )
+        }
+    }
+
+    // --- 자막 조작 ---
+    fun openCaptionEditorForNew() {
+        val state = _uiState.value
+        val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs)
+            ?: return
+        val srcEnd = (sourceT + DEFAULT_NEW_CAPTION_MS).coerceAtMost(seg.sourceEndMs)
+        _uiState.update {
+            it.copy(
+                editingCaption = TimelineCaption(
+                    sourceStartMs = sourceT,
+                    sourceEndMs = srcEnd,
+                    text = "",
+                )
+            )
+        }
+    }
+
+    fun openCaptionEditorFor(id: String) {
+        val cap = _uiState.value.timeline.captions.firstOrNull { it.id == id } ?: return
+        _uiState.update { it.copy(editingCaption = cap) }
+    }
+
+    fun closeCaptionEditor() = _uiState.update { it.copy(editingCaption = null) }
+
+    fun saveCaption(caption: TimelineCaption) {
+        _uiState.update {
+            val existed = it.timeline.captions.any { c -> c.id == caption.id }
+            val t = if (existed) it.timeline.updateCaption(caption)
+            else it.timeline.addCaption(caption)
+            it.copy(timeline = t, editingCaption = null)
+        }
+    }
+
+    fun deleteEditingCaption() {
+        val id = _uiState.value.editingCaption?.id ?: return
+        _uiState.update {
+            it.copy(timeline = it.timeline.deleteCaption(id), editingCaption = null)
+        }
+    }
+
+    // --- Export ---
     fun startExport() {
         val state = _uiState.value
         val uri = state.videoUri ?: return
 
         viewModelScope.launch {
             _uiState.update { it.copy(phase = ExportPhase.Running(0f)) }
-
-            val result = videoEditor.export(
-                spec = VideoEditor.EditSpec(
-                    sourceUri = uri,
-                    trimStartMs = state.trimStartMs,
-                    trimEndMs = state.trimEndMs,
-                    captionCues = state.cues.ifEmpty { null },
-                ),
+            videoEditor.exportTimeline(
+                sourceUri = uri,
+                timeline = state.timeline,
                 onProgress = { p ->
-                    _uiState.update {
-                        val current = it.phase
-                        if (current is ExportPhase.Running) it.copy(phase = ExportPhase.Running(p))
-                        else it
+                    _uiState.update { s ->
+                        if (s.phase is ExportPhase.Running) s.copy(phase = ExportPhase.Running(p))
+                        else s
                     }
                 },
-            )
-
-            result.fold(
+            ).fold(
                 onSuccess = { file ->
                     _uiState.update { it.copy(phase = ExportPhase.Success(file.absolutePath)) }
                     projectId?.let { pid ->
@@ -143,7 +237,7 @@ class EditorViewModel(
                             projectId = pid,
                             type = AssetType.EXPORT_VIDEO,
                             value = file.absolutePath,
-                            label = "편집본",
+                            label = "편집본 (${state.timeline.segments.size}컷)",
                         )
                     }
                 },
@@ -156,9 +250,7 @@ class EditorViewModel(
         }
     }
 
-    fun dismissMessage() {
-        _uiState.update { it.copy(phase = ExportPhase.Idle) }
-    }
+    fun dismissMessage() = _uiState.update { it.copy(phase = ExportPhase.Idle) }
 
     private fun readDurationMs(uri: Uri): Long {
         val retriever = MediaMetadataRetriever()
@@ -174,12 +266,15 @@ class EditorViewModel(
     }
 
     companion object {
+        private const val DEFAULT_NEW_CAPTION_MS = 2_000L
+
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as StudioPopApp
                 EditorViewModel(
                     application = app,
                     videoEditor = app.container.videoEditor,
+                    frameStripGenerator = app.container.frameStripGenerator,
                     projectRepository = app.container.projectRepository,
                 )
             }
