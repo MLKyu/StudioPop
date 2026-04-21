@@ -7,7 +7,15 @@ import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.data.caption.AudioChunker
 import com.mingeek.studiopop.data.caption.AudioExtractor
 import com.mingeek.studiopop.data.caption.ChunkedTranscriber
+import com.mingeek.studiopop.data.caption.PcmDecoder
+import com.mingeek.studiopop.data.caption.SpeechToText
+import com.mingeek.studiopop.data.caption.SttEngine
+import com.mingeek.studiopop.data.caption.SttRegistry
+import com.mingeek.studiopop.data.caption.VoskModelManager
+import com.mingeek.studiopop.data.caption.VoskTranscriber
+import com.mingeek.studiopop.data.caption.WhisperApiEngine
 import com.mingeek.studiopop.data.caption.WhisperClient
+import com.mingeek.studiopop.data.caption.WhisperCppEngine
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AppDatabase
@@ -83,6 +91,33 @@ class AppContainer(context: Context) {
 
     val chunkedTranscriber: ChunkedTranscriber by lazy {
         ChunkedTranscriber(audioChunker, whisperClient)
+    }
+
+    // --- STT 엔진 어셈블리 (Phase 8) ---
+    val pcmDecoder: PcmDecoder by lazy { PcmDecoder(appContext) }
+
+    val voskModelManager: VoskModelManager by lazy {
+        VoskModelManager(appContext, okHttpClient)
+    }
+
+    private val whisperApiEngine: WhisperApiEngine by lazy {
+        WhisperApiEngine(chunkedTranscriber)
+    }
+
+    private val voskEngine: VoskTranscriber by lazy {
+        VoskTranscriber(pcmDecoder, voskModelManager, moshi)
+    }
+
+    private val whisperCppEngine: WhisperCppEngine by lazy { WhisperCppEngine() }
+
+    val sttRegistry: SttRegistry by lazy {
+        SttRegistry(
+            mapOf<SttEngine, SpeechToText>(
+                SttEngine.WHISPER_API to whisperApiEngine,
+                SttEngine.VOSK_LOCAL to voskEngine,
+                SttEngine.WHISPER_CPP to whisperCppEngine,
+            )
+        )
     }
 
     @get:UnstableApi
