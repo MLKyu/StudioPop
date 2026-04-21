@@ -44,22 +44,47 @@ data class TextLayer(
 )
 
 /**
+ * 원본 영상에서 **잘라낼(삭제할)** 구간.
+ * segments 에 저장된 원본 범위를 그대로 유지한 채 export/preview 시점에만 차감 적용.
+ * 덕분에 사용자가 구간을 자유롭게 조정·제거 가능 (undo 대신 CutRange 자체를 지우면 복원).
+ */
+data class CutRange(
+    val id: String = UUID.randomUUID().toString(),
+    val sourceUri: android.net.Uri,
+    val sourceStartMs: Long,
+    val sourceEndMs: Long,
+)
+
+/**
  * 불변 타임라인. 모든 조작은 새 인스턴스를 반환.
  */
 data class Timeline(
     val segments: List<TimelineSegment>,
     val captions: List<TimelineCaption> = emptyList(),
     val textLayers: List<TextLayer> = emptyList(),
+    val cutRanges: List<CutRange> = emptyList(),
     val transitions: TransitionSettings = TransitionSettings(),
     val audioTrack: AudioTrack? = null,
 ) {
 
-    val outputDurationMs: Long
-        get() = segments.sumOf { it.durationMs }
-
     /**
-     * 출력 시각 → (세그먼트, 해당 세그먼트 내부 source 시각) 매핑.
+     * cutRanges 를 segments 에 차감한 export/render 용 세그먼트. 시각적 타임라인은
+     * raw 기준으로 그대로 그리고(= cut 막대를 보여주기 위해) export 만 이걸 사용.
+     * 프리뷰 player 도 raw segments 재생 — cut 은 시각 힌트만 (export 전까지 제거 안 됨).
      */
+    fun effectiveSegments(): List<TimelineSegment> {
+        if (cutRanges.isEmpty()) return segments
+        var result = segments
+        for (cut in cutRanges) {
+            result = result.flatMap { seg -> seg.minus(cut) }
+        }
+        return result
+    }
+
+    /** 타임라인 UI 너비·플레이헤드 좌표는 raw 기준. cut 은 visual overlay 로만 표현. */
+    val outputDurationMs: Long get() = segments.sumOf { it.durationMs }
+
+    /** 출력 시각 → (세그먼트, 해당 세그먼트 내부 source 시각) 매핑 — raw 기준. */
     fun mapOutputToSource(outputMs: Long): Pair<TimelineSegment, Long>? {
         var accumulated = 0L
         for (seg in segments) {
@@ -73,10 +98,7 @@ data class Timeline(
         return null
     }
 
-    /**
-     * source 시각이 현재 타임라인에서 보이는지, 보인다면 출력 시각은 몇인지.
-     * 같은 source 시각이 여러 세그먼트에 있으면 첫 번째 매칭 반환.
-     */
+    /** source 시각 → raw 출력 시각. */
     fun mapSourceToOutput(sourceMs: Long): Long? {
         var accumulated = 0L
         for (seg in segments) {
@@ -176,6 +198,12 @@ data class Timeline(
     fun deleteTextLayer(id: String): Timeline =
         copy(textLayers = textLayers.filter { it.id != id })
 
+    fun addCutRange(range: CutRange): Timeline = copy(cutRanges = cutRanges + range)
+    fun updateCutRange(range: CutRange): Timeline =
+        copy(cutRanges = cutRanges.map { if (it.id == range.id) range else it })
+    fun deleteCutRange(id: String): Timeline =
+        copy(cutRanges = cutRanges.filter { it.id != id })
+
     fun withTransitions(t: TransitionSettings): Timeline = copy(transitions = t)
     fun withAudioTrack(a: AudioTrack?): Timeline = copy(audioTrack = a)
 
@@ -220,3 +248,24 @@ data class AudioTrack(
     val uri: android.net.Uri,
     val replaceOriginal: Boolean = true,
 )
+
+/**
+ * 이 세그먼트에서 [cut] 구간을 차감한 결과.
+ * - sourceUri 다르면 영향 없음 (원래 그대로 반환)
+ * - cut 이 segment 를 감싸면 빈 리스트
+ * - 중간을 관통하면 앞/뒤 두 개로 분리
+ * - 한쪽 경계만 겹치면 해당 부분만 잘림
+ */
+internal fun TimelineSegment.minus(cut: CutRange): List<TimelineSegment> {
+    if (sourceUri != cut.sourceUri) return listOf(this)
+    val cutStart = cut.sourceStartMs
+    val cutEnd = cut.sourceEndMs
+    if (cutEnd <= sourceStartMs || cutStart >= sourceEndMs) return listOf(this)
+    if (cutStart <= sourceStartMs && cutEnd >= sourceEndMs) return emptyList()
+    if (cutStart > sourceStartMs && cutEnd < sourceEndMs) return listOf(
+        copy(sourceEndMs = cutStart),
+        copy(id = java.util.UUID.randomUUID().toString(), sourceStartMs = cutEnd),
+    )
+    if (cutStart <= sourceStartMs) return listOf(copy(sourceStartMs = cutEnd))
+    return listOf(copy(sourceEndMs = cutStart))
+}

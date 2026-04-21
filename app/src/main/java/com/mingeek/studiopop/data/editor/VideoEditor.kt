@@ -90,11 +90,12 @@ class VideoEditor(
         onProgress: (Float) -> Unit = {},
     ): Result<File> = withContext(Dispatchers.Main) {
         runCatching {
-            require(timeline.segments.isNotEmpty()) { "빈 타임라인은 export 불가" }
+            val effective = timeline.effectiveSegments()
+            require(effective.isNotEmpty()) { "빈 타임라인은 export 불가 (cut 으로 전부 제거됐거나 세그먼트 없음)" }
             val outFile = File(outputDir, "edit_${System.currentTimeMillis()}.mp4")
 
             val removeOriginalAudio = timeline.audioTrack?.replaceOriginal == true
-            val videoItems = timeline.segments.map { seg ->
+            val videoItems = effective.map { seg ->
                 val mediaItem = MediaItem.Builder()
                     .setUri(seg.sourceUri)
                     .setClippingConfiguration(
