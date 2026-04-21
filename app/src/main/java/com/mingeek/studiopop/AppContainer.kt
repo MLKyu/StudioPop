@@ -113,8 +113,21 @@ class AppContainer(context: Context) {
         WhisperCppModelManager(appContext, okHttpClient)
     }
 
+    /**
+     * 사용자가 선택한 whisper.cpp variant. CaptionViewModel 이 setter 로 갱신.
+     * lazy 컨테이너 환경에서 단일 진실 소스를 두기 위해 컨테이너에 보관.
+     */
+    @Volatile
+    var whisperCppVariant: WhisperCppModelManager.Variant =
+        WhisperCppModelManager.Variant.BASE_Q5
+
     private val whisperCppEngine: WhisperCppEngine by lazy {
-        WhisperCppEngine(pcmDecoder, whisperCppModelManager, moshi)
+        WhisperCppEngine(
+            pcmDecoder = pcmDecoder,
+            modelManager = whisperCppModelManager,
+            moshi = moshi,
+            variantProvider = { whisperCppVariant },
+        )
     }
 
     val sttRegistry: SttRegistry by lazy {
