@@ -4,6 +4,10 @@ import android.net.Uri
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -37,9 +41,27 @@ class VoskTranscriber(
         onProgress: (SpeechToText.Progress) -> Unit,
     ): Result<List<Cue>> = withContext(Dispatchers.Default) {
         runCatching {
-            // 1) 모델 보장
-            onProgress(SpeechToText.Progress(0, 3, "모델 준비"))
-            modelManager.ensureInstalled().getOrThrow()
+            // 1) 모델 보장 — 다운로드/압축해제 진행률 200ms 폴링
+            onProgress(SpeechToText.Progress(0, 100, "모델 준비"))
+            coroutineScope {
+                val poller = launch {
+                    while (isActive) {
+                        val pct = (modelManager.progress.value * 100).toInt().coerceIn(0, 100)
+                        val phase = when (modelManager.state.value) {
+                            VoskModelManager.State.DOWNLOADING -> "Vosk 모델 다운로드"
+                            VoskModelManager.State.UNZIPPING   -> "모델 압축 해제"
+                            else                               -> "모델 준비"
+                        }
+                        onProgress(SpeechToText.Progress(pct, 100, phase))
+                        delay(200L)
+                    }
+                }
+                try {
+                    modelManager.ensureInstalled().getOrThrow()
+                } finally {
+                    poller.cancel()
+                }
+            }
 
             // 2) PCM 디코드
             onProgress(SpeechToText.Progress(1, 3, "오디오 디코드"))
