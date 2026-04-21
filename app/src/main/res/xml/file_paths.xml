@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- getExternalFilesDir(null) — 내보낸 영상/썸네일/자막 -->
+    <external-files-path
+        name="exports"
+        path="." />
+
+    <!-- filesDir — 모델 파일 등 (보통 share 안 하지만 디버그용) -->
+    <files-path
+        name="internal"
+        path="." />
+
+    <!-- cacheDir — 임시 파일 -->
+    <cache-path
+        name="cache"
+        path="." />
+</paths>

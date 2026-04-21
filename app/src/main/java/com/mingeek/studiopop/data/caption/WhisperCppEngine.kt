@@ -56,7 +56,21 @@ class WhisperCppEngine(
             val variant = variantProvider()
 
             onProgress(SpeechToText.Progress(0, 100, "모델 준비 (${variant.displayName})"))
-            modelManager.ensureInstalled(variant).getOrThrow()
+            // 다운로드 진행률을 200ms 마다 onProgress 로 발화
+            coroutineScope {
+                val downloadPoller = launch {
+                    while (isActive) {
+                        val pct = (modelManager.downloadProgress.value * 100).toInt().coerceIn(0, 100)
+                        onProgress(SpeechToText.Progress(pct, 100, "모델 다운로드"))
+                        delay(POLL_MS)
+                    }
+                }
+                try {
+                    modelManager.ensureInstalled(variant).getOrThrow()
+                } finally {
+                    downloadPoller.cancel()
+                }
+            }
 
             onProgress(SpeechToText.Progress(0, 100, "오디오 디코드"))
             val pcmShort = pcmDecoder.decode(videoUri, SAMPLE_RATE)
