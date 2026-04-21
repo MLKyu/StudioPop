@@ -160,18 +160,30 @@ fun TimelineView(
 
             // [최상단 — interactive] 드래그 가능한 플레이헤드 dongle.
             //
-            // 주의: pointerInput 의 람다는 key 가 바뀔 때만 새로 만들어지므로, 안쪽
-            // playheadOutputMs 참조가 stale 하면 델타가 항상 초기값 기준으로
-            // 계산돼 첫 이벤트 이후 고정된다. rememberUpdatedState 로 최신값 참조.
+            // stale closure 대응: pointerInput 람다는 key 변경 시에만 재생성되므로
+            // 최신 playhead 값 참조를 위해 rememberUpdatedState 사용.
             val latestPlayhead by rememberUpdatedState(playheadOutputMs)
             val latestTotal by rememberUpdatedState(timeline.outputDurationMs)
             val latestPxPerMs by rememberUpdatedState(pxPerMs)
-            val playheadXDp = with(density) { (playheadOutputMs * pxPerMs).toDp() }
 
-            // 터치 타깃은 40dp (WCAG 최소), 내부에 18dp 원형 dongle 을 그려 시각 유지.
+            // Edge clamp: playhead 가 타임라인의 시작/끝에 있을 때 40dp 터치 박스의
+            // 절반이 부모 Box 바깥으로 나가 hit test 에 걸리지 않는 문제를 방지.
+            // 터치 박스 자체는 항상 [0, totalWidth - touchSize] 안에 위치시키고,
+            // 시각 원(18dp)은 박스 내부에서 실제 playhead 위치로 offset 해서 line 과 정렬 유지.
+            val playheadPx = playheadOutputMs * pxPerMs
+            val touchSizePx = with(density) { DONGLE_TOUCH_DP.dp.toPx() }
+            val totalPx = with(density) { totalWidthDp.toPx() }
+            val maxLeftPx = (totalPx - touchSizePx).coerceAtLeast(0f)
+            val clampedLeftPx = (playheadPx - touchSizePx / 2f).coerceIn(0f, maxLeftPx)
+            val dongleLeftDp = with(density) { clampedLeftPx.toDp() }
+
+            val circleHalfPx = with(density) { (DONGLE_SIZE_DP / 2).dp.toPx() }
+            val circleOffsetInBoxPx = (playheadPx - clampedLeftPx) - circleHalfPx
+            val circleOffsetInBoxDp = with(density) { circleOffsetInBoxPx.toDp() }
+
             Box(
                 modifier = Modifier
-                    .offset(x = playheadXDp - (DONGLE_TOUCH_DP / 2).dp)
+                    .offset(x = dongleLeftDp)
                     .size(DONGLE_TOUCH_DP.dp)
                     .pointerInput(Unit) {
                         detectDragGestures { change, drag ->
@@ -182,10 +194,10 @@ fun TimelineView(
                             onPlayheadDrag(newMs)
                         }
                     },
-                contentAlignment = Alignment.TopCenter,
             ) {
                 Box(
                     modifier = Modifier
+                        .offset(x = circleOffsetInBoxDp)
                         .size(DONGLE_SIZE_DP.dp)
                         .clip(CircleShape)
                         .background(Color(0xFFFF4081))
