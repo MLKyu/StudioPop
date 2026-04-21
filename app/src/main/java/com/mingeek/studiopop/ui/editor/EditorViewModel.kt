@@ -304,6 +304,48 @@ class EditorViewModel(
         }
     }
 
+    /**
+     * 타임라인에서 자막 막대 양끝 드래그 → 시각 범위 조정.
+     * @param startDeltaMs sourceStartMs 에 더할 값 (왼쪽 핸들)
+     * @param endDeltaMs sourceEndMs 에 더할 값 (오른쪽 핸들)
+     */
+    fun onCaptionResize(id: String, startDeltaMs: Long, endDeltaMs: Long) {
+        _uiState.update { state ->
+            val cap = state.timeline.captions.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (cap.sourceStartMs + startDeltaMs).coerceAtLeast(0L)
+            val newEnd = (cap.sourceEndMs + endDeltaMs).coerceAtLeast(newStart + MIN_OVERLAY_DURATION_MS)
+            state.copy(timeline = state.timeline.updateCaption(cap.copy(sourceStartMs = newStart, sourceEndMs = newEnd)))
+        }
+    }
+
+    fun onTextLayerResize(id: String, startDeltaMs: Long, endDeltaMs: Long) {
+        _uiState.update { state ->
+            val layer = state.timeline.textLayers.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (layer.sourceStartMs + startDeltaMs).coerceAtLeast(0L)
+            val newEnd = (layer.sourceEndMs + endDeltaMs).coerceAtLeast(newStart + MIN_OVERLAY_DURATION_MS)
+            state.copy(timeline = state.timeline.updateTextLayer(layer.copy(sourceStartMs = newStart, sourceEndMs = newEnd)))
+        }
+    }
+
+    /**
+     * 미리보기 세로 드래그 → anchorY 조정 (NDC -1..1).
+     */
+    fun onCaptionAnchorChange(id: String, newAnchorY: Float) {
+        _uiState.update { state ->
+            val cap = state.timeline.captions.firstOrNull { it.id == id } ?: return@update state
+            val clipped = newAnchorY.coerceIn(-1f, 1f)
+            state.copy(timeline = state.timeline.updateCaption(cap.copy(style = cap.style.copy(anchorY = clipped))))
+        }
+    }
+
+    fun onTextLayerAnchorChange(id: String, newAnchorY: Float) {
+        _uiState.update { state ->
+            val layer = state.timeline.textLayers.firstOrNull { it.id == id } ?: return@update state
+            val clipped = newAnchorY.coerceIn(-1f, 1f)
+            state.copy(timeline = state.timeline.updateTextLayer(layer.copy(style = layer.style.copy(anchorY = clipped))))
+        }
+    }
+
     fun deleteEditingItem() {
         val state = _uiState.value
         val id = state.editingItem?.id ?: return
@@ -412,6 +454,7 @@ class EditorViewModel(
 
     companion object {
         private const val DEFAULT_NEW_DURATION_MS = 2_000L
+        private const val MIN_OVERLAY_DURATION_MS = 200L
 
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

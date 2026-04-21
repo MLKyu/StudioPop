@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.mingeek.studiopop.data.editor.TextLayer
 import com.mingeek.studiopop.data.editor.Timeline
 import com.mingeek.studiopop.data.editor.TimelineCaption
 import com.mingeek.studiopop.data.editor.TimelineSegment
@@ -56,8 +57,11 @@ fun TimelineView(
     pxPerMs: Float = DEFAULT_PX_PER_MS,
     onSegmentTap: (String) -> Unit,
     onCaptionTap: (String) -> Unit,
+    onTextLayerTap: (String) -> Unit,
     onPlayheadDrag: (Long) -> Unit,
     onDividerDrag: (prevSegId: String, nextSegId: String, sourceDeltaMs: Long) -> Unit,
+    onCaptionResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
+    onTextLayerResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -94,15 +98,40 @@ fun TimelineView(
                 }
             }
 
-            // 2) 자막 막대 레이어
+            // 2) 텍스트 레이어 (상단 라인)
             Box(modifier = Modifier.fillMaxHeight()) {
-                timeline.captions.forEach { cap ->
-                    CaptionBar(
-                        caption = cap,
+                timeline.textLayers.forEach { layer ->
+                    OverlayBar(
+                        id = layer.id,
+                        text = layer.text.ifBlank { "텍스트" },
+                        sourceStartMs = layer.sourceStartMs,
+                        sourceEndMs = layer.sourceEndMs,
                         timeline = timeline,
                         pxPerMs = pxPerMs,
+                        topDp = TEXT_LAYER_BAR_TOP_DP.dp,
+                        barColor = Color(0xFFFFB300),
+                        isSelected = layer.id == selectedCaptionId,
+                        onTap = { onTextLayerTap(layer.id) },
+                        onResize = { s, e -> onTextLayerResize(layer.id, s, e) },
+                    )
+                }
+            }
+
+            // 3) 자막 막대 (하단 라인)
+            Box(modifier = Modifier.fillMaxHeight()) {
+                timeline.captions.forEach { cap ->
+                    OverlayBar(
+                        id = cap.id,
+                        text = cap.text.ifBlank { "…" },
+                        sourceStartMs = cap.sourceStartMs,
+                        sourceEndMs = cap.sourceEndMs,
+                        timeline = timeline,
+                        pxPerMs = pxPerMs,
+                        topDp = CAPTION_BAR_TOP_DP.dp,
+                        barColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f),
                         isSelected = cap.id == selectedCaptionId,
                         onTap = { onCaptionTap(cap.id) },
+                        onResize = { s, e -> onCaptionResize(cap.id, s, e) },
                     )
                 }
             }
@@ -254,45 +283,96 @@ private fun SegmentBlock(
     }
 }
 
+/**
+ * 자막·텍스트 레이어 공용 막대.
+ * 양끝 [HANDLE_WIDTH_DP] 영역은 드래그해서 시간 범위를 조절 가능.
+ * 가운데 탭 하면 편집 시트 오픈.
+ */
 @Composable
-private fun CaptionBar(
-    caption: TimelineCaption,
+private fun OverlayBar(
+    id: String,
+    text: String,
+    sourceStartMs: Long,
+    sourceEndMs: Long,
     timeline: Timeline,
     pxPerMs: Float,
+    topDp: androidx.compose.ui.unit.Dp,
+    barColor: Color,
     isSelected: Boolean,
     onTap: () -> Unit,
+    onResize: (startDeltaMs: Long, endDeltaMs: Long) -> Unit,
 ) {
     val density = LocalDensity.current
-    val startOutputMs = timeline.mapSourceToOutput(caption.sourceStartMs) ?: return
-    val endOutputMs = timeline.mapSourceToOutput(caption.sourceEndMs) ?: return
+    val startOutputMs = timeline.mapSourceToOutput(sourceStartMs) ?: return
+    val endOutputMs = timeline.mapSourceToOutput(sourceEndMs) ?: return
     if (endOutputMs <= startOutputMs) return
 
     val widthDp = with(density) { ((endOutputMs - startOutputMs) * pxPerMs).toDp() }
     val leftDp = with(density) { (startOutputMs * pxPerMs).toDp() }
+    val canResize = widthDp > (HANDLE_WIDTH_DP * 2 + 8).dp
 
     Box(
         modifier = Modifier
-            .padding(start = leftDp, top = 4.dp)
-            .height(CAPTION_BAR_HEIGHT_DP.dp)
+            .padding(start = leftDp, top = topDp)
+            .height(BAR_HEIGHT_DP.dp)
             .width(widthDp)
             .clip(RoundedCornerShape(4.dp))
-            .background(
-                if (isSelected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f)
-            )
-            .clickable { onTap() },
+            .background(if (isSelected) MaterialTheme.colorScheme.primary else barColor),
     ) {
-        Text(
-            caption.text.ifBlank { "…" },
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-        )
+        Row(modifier = Modifier.fillMaxHeight()) {
+            if (canResize) {
+                ResizeHandle(
+                    modifier = Modifier.width(HANDLE_WIDTH_DP.dp).fillMaxHeight(),
+                    pxPerMs = pxPerMs,
+                ) { deltaMs -> onResize(deltaMs, 0L) }
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable { onTap() },
+            ) {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                )
+            }
+            if (canResize) {
+                ResizeHandle(
+                    modifier = Modifier.width(HANDLE_WIDTH_DP.dp).fillMaxHeight(),
+                    pxPerMs = pxPerMs,
+                ) { deltaMs -> onResize(0L, deltaMs) }
+            }
+        }
     }
+}
+
+@Composable
+private fun ResizeHandle(
+    modifier: Modifier = Modifier,
+    pxPerMs: Float,
+    onDrag: (deltaMs: Long) -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.3f))
+            .pointerInput(pxPerMs) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    val dms = (drag.x / pxPerMs).toLong()
+                    if (dms != 0L) onDrag(dms)
+                }
+            }
+    )
 }
 
 private const val DEFAULT_PX_PER_MS = 0.15f // 1초 = 150px
 private const val TIMELINE_HEIGHT_DP = 120
 private const val DIVIDER_HIT_WIDTH_DP = 14
-private const val CAPTION_BAR_HEIGHT_DP = 22
+private const val BAR_HEIGHT_DP = 22
+private const val HANDLE_WIDTH_DP = 10
+private const val TEXT_LAYER_BAR_TOP_DP = 4      // 상단 라인
+private const val CAPTION_BAR_TOP_DP = 30        // 하단 라인 (TextLayer 바로 아래)
