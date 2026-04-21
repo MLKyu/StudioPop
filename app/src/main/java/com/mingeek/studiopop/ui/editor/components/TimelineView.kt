@@ -59,10 +59,8 @@ fun TimelineView(
     /** 영상 Uri → (총 길이 ms, 프레임 스트립) 맵. 각 세그먼트가 자기 sourceUri 로 조회. */
     frameStrips: Map<Uri, Pair<Long, List<Bitmap>>>,
     playheadOutputMs: Long,
-    selectedSegmentId: String?,
     selectedCaptionId: String?,
     pxPerMs: Float = DEFAULT_PX_PER_MS,
-    onSegmentTap: (String) -> Unit,
     onCaptionTap: (String) -> Unit,
     onTextLayerTap: (String) -> Unit,
     onPlayheadDrag: (Long) -> Unit,
@@ -114,9 +112,7 @@ fun TimelineView(
                         segment = seg,
                         totalSourceMs = totalSourceMs,
                         frameStrip = strip,
-                        isSelected = seg.id == selectedSegmentId,
                         pxPerMs = pxPerMs,
-                        onTap = { onSegmentTap(seg.id) },
                     )
                     // 세그먼트 사이 드래그 가능 경계(마지막 제외)
                     if (idx < timeline.segments.lastIndex) {
@@ -257,20 +253,21 @@ private fun DraggableDivider(
     }
 }
 
+/**
+ * 세그먼트 = 순수 시각. 사용자 조작은 플레이헤드 seek(바깥 캡처) / 경계 드래그
+ * (DraggableDivider) / 분할 버튼 / 삭제 버튼 경유로만. 이 블록 자체는 pointerInput
+ * 도 clickable 도 없어서 아래 seek 캡처 레이어로 이벤트가 fall-through 함.
+ */
 @Composable
 private fun SegmentBlock(
     segment: TimelineSegment,
     totalSourceMs: Long,
     frameStrip: List<Bitmap>,
-    isSelected: Boolean,
     pxPerMs: Float,
-    onTap: () -> Unit,
 ) {
     val density = LocalDensity.current
     val widthDp = with(density) { (segment.durationMs * pxPerMs).toDp() }
 
-    // 이 세그먼트에 해당하는 썸네일 인덱스 범위 계산.
-    // frameStrip 은 백그라운드로 생성되므로 초기에는 비어 있을 수 있음 → 가드 필수.
     val n = frameStrip.size
     val hasFrames = n > 0 && totalSourceMs > 0
     val step: Long = if (hasFrames) (totalSourceMs / n).coerceAtLeast(1L) else 0L
@@ -287,16 +284,6 @@ private fun SegmentBlock(
             .width(widthDp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(6.dp))
-            .then(
-                if (isSelected)
-                    Modifier.border(
-                        2.dp,
-                        MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(6.dp)
-                    )
-                else Modifier
-            )
-            .clickable { onTap() }
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
         // 썸네일 균등 배치
