@@ -7,9 +7,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -67,6 +67,8 @@ fun TimelineView(
     onDividerDrag: (prevSegId: String, nextSegId: String, sourceDeltaMs: Long) -> Unit,
     onCaptionResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
     onTextLayerResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
+    onCaptionTranslate: (id: String, deltaMs: Long) -> Unit,
+    onTextLayerTranslate: (id: String, deltaMs: Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -78,30 +80,9 @@ fun TimelineView(
             .horizontalScroll(rememberScrollState()),
     ) {
         Box(modifier = Modifier.width(totalWidthDp).fillMaxHeight()) {
-            // [최하층] 플레이헤드 탭/드래그 캡처.
-            // bars·segments 보다 먼저 그려져 아래 레이어가 되므로, 위의 interactive
-            // 요소(bar·segment·handle) 가 이벤트를 먼저 받고 안 쓰면 여기로 fall-through.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(timeline.outputDurationMs, pxPerMs) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown()
-                            val initMs = (down.position.x / pxPerMs).toLong()
-                                .coerceIn(0L, timeline.outputDurationMs)
-                            onPlayheadDrag(initMs)
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val c = event.changes.firstOrNull() ?: break
-                                if (!c.pressed) break
-                                val ms = (c.position.x / pxPerMs).toLong()
-                                    .coerceIn(0L, timeline.outputDurationMs)
-                                onPlayheadDrag(ms)
-                                c.consume()
-                            }
-                        }
-                    }
-            )
+            // 참고: 빈 타임라인 영역 탭은 아무 동작 안 함. 플레이헤드 이동은 오직
+            // 하단의 dongle 드래그로만. 덕분에 부모 horizontalScroll 이 가로 스와이프를
+            // 자연스럽게 소비해 타임라인 스크롤이 가능해짐.
 
             // 1) 세그먼트 + 썸네일 레이어
             Row(modifier = Modifier.fillMaxHeight()) {
@@ -141,6 +122,7 @@ fun TimelineView(
                         isSelected = layer.id == selectedCaptionId,
                         onTap = { onTextLayerTap(layer.id) },
                         onResize = { s, e -> onTextLayerResize(layer.id, s, e) },
+                        onTranslate = { d -> onTextLayerTranslate(layer.id, d) },
                     )
                 }
             }
@@ -160,6 +142,7 @@ fun TimelineView(
                         isSelected = cap.id == selectedCaptionId,
                         onTap = { onCaptionTap(cap.id) },
                         onResize = { s, e -> onCaptionResize(cap.id, s, e) },
+                        onTranslate = { d -> onCaptionTranslate(cap.id, d) },
                     )
                 }
             }
@@ -312,8 +295,9 @@ private fun SegmentBlock(
 
 /**
  * 자막·텍스트 레이어 공용 막대.
- * 양끝 [HANDLE_WIDTH_DP] 영역은 드래그해서 시간 범위를 조절 가능.
- * 가운데 탭 하면 편집 시트 오픈.
+ * - 가운데 탭 → [onTap] (편집 시트 오픈)
+ * - 가운데 길게 누른 뒤 드래그 → [onTranslate] (duration 유지한 채 전체 평행이동)
+ * - 양끝 [HANDLE_WIDTH_DP] 핸들 가로 드래그 → [onResize] (시작/끝 개별 조정)
  */
 @Composable
 private fun OverlayBar(
@@ -328,6 +312,7 @@ private fun OverlayBar(
     isSelected: Boolean,
     onTap: () -> Unit,
     onResize: (startDeltaMs: Long, endDeltaMs: Long) -> Unit,
+    onTranslate: (deltaMs: Long) -> Unit,
 ) {
     val density = LocalDensity.current
     val startOutputMs = timeline.mapSourceToOutput(sourceStartMs) ?: return
@@ -357,7 +342,19 @@ private fun OverlayBar(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clickable { onTap() },
+                    // 두 개의 pointerInput 을 별도 체이닝:
+                    //   ① 단순 탭 → 편집 시트
+                    //   ② 롱프레스 후 드래그 → 평행이동 (duration 유지)
+                    .pointerInput(id) {
+                        detectTapGestures(onTap = { onTap() })
+                    }
+                    .pointerInput(id, pxPerMs) {
+                        detectDragGesturesAfterLongPress { change, drag ->
+                            change.consume()
+                            val deltaMs = (drag.x / pxPerMs).toLong()
+                            if (deltaMs != 0L) onTranslate(deltaMs)
+                        }
+                    },
             ) {
                 Text(
                     text,

@@ -329,6 +329,31 @@ class EditorViewModel(
     }
 
     /**
+     * 타임라인 막대 롱프레스 후 드래그 → 전체 평행이동 (duration 유지).
+     */
+    fun onCaptionTranslate(id: String, deltaMs: Long) {
+        _uiState.update { state ->
+            val cap = state.timeline.captions.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (cap.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val duration = cap.sourceEndMs - cap.sourceStartMs
+            state.copy(timeline = state.timeline.updateCaption(
+                cap.copy(sourceStartMs = newStart, sourceEndMs = newStart + duration)
+            ))
+        }
+    }
+
+    fun onTextLayerTranslate(id: String, deltaMs: Long) {
+        _uiState.update { state ->
+            val layer = state.timeline.textLayers.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (layer.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val duration = layer.sourceEndMs - layer.sourceStartMs
+            state.copy(timeline = state.timeline.updateTextLayer(
+                layer.copy(sourceStartMs = newStart, sourceEndMs = newStart + duration)
+            ))
+        }
+    }
+
+    /**
      * 미리보기 세로 드래그 → anchorY 조정 (NDC -1..1).
      */
     fun onCaptionAnchorChange(id: String, newAnchorY: Float) {
