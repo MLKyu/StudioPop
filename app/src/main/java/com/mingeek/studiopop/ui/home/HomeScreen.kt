@@ -28,6 +28,7 @@ fun HomeScreen(
     onNavigateThumbnail: () -> Unit,
     onNavigateShorts: () -> Unit,
     onNavigateProjects: () -> Unit,
+    onNavigateExports: () -> Unit,
 ) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("YT Creator SuperApp") }) }
@@ -75,6 +76,13 @@ fun HomeScreen(
                 title = "YouTube 업로드",
                 subtitle = "단일 영상 바로 올리기",
                 onClick = onNavigateUpload,
+            )
+
+            Text("관리", style = MaterialTheme.typography.titleMedium)
+            MenuCard(
+                title = "📁 내보낸 파일",
+                subtitle = "편집·숏츠·썸네일·자막 결과물 관리 (열기·공유·삭제)",
+                onClick = onNavigateExports,
             )
         }
     }

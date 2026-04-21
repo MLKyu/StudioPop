@@ -10,6 +10,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mingeek.studiopop.ui.caption.CaptionScreen
 import com.mingeek.studiopop.ui.editor.EditorScreen
+import com.mingeek.studiopop.ui.exports.ExportsScreen
 import com.mingeek.studiopop.ui.home.HomeScreen
 import com.mingeek.studiopop.ui.project.ProjectDetailScreen
 import com.mingeek.studiopop.ui.project.ProjectListScreen
@@ -26,6 +27,7 @@ object Routes {
     const val SHORTS = "shorts"
     const val PROJECT_LIST = "projects"
     const val PROJECT_DETAIL = "project/{projectId}"
+    const val EXPORTS = "exports"
 
     // projectId 를 옵셔널 쿼리 파라미터로 넣는 템플릿
     fun routeWithProject(base: String) = "$base?projectId={projectId}"
@@ -54,7 +56,11 @@ fun AppNavHost() {
                 onNavigateThumbnail = { nav.navigate(Routes.THUMBNAIL) },
                 onNavigateShorts = { nav.navigate(Routes.SHORTS) },
                 onNavigateProjects = { nav.navigate(Routes.PROJECT_LIST) },
+                onNavigateExports = { nav.navigate(Routes.EXPORTS) },
             )
+        }
+        composable(Routes.EXPORTS) {
+            ExportsScreen(onNavigateBack = { nav.popBackStack() })
         }
         composable(Routes.PROJECT_LIST) {
             ProjectListScreen(
