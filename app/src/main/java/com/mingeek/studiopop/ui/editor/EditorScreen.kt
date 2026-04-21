@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.ui.editor.components.CaptionEditorSheet
+import com.mingeek.studiopop.ui.editor.components.PreviewCaptionOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewPlayer
 import com.mingeek.studiopop.ui.editor.components.TimelineView
 
@@ -124,6 +125,12 @@ fun EditorScreen(
                         },
                         seekToOutputMs = state.seekRequest,
                         isPlaying = state.isPlaying,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    // 프리뷰 위에 자막/텍스트 레이어 Compose 오버레이
+                    PreviewCaptionOverlay(
+                        timeline = state.timeline,
+                        currentOutputMs = state.playheadOutputMs,
                         modifier = Modifier.fillMaxSize(),
                     )
                     if (state.seekRequest != null) {
