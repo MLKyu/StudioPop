@@ -130,10 +130,12 @@ fun EditorScreen(
                         isPlaying = state.isPlaying,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    // 프리뷰 위에 자막/텍스트 레이어 Compose 오버레이
+                    // 프리뷰 위에 자막/텍스트 레이어 Compose 오버레이. 세로 드래그로 anchorY 조정.
                     PreviewCaptionOverlay(
                         timeline = state.timeline,
                         currentOutputMs = state.playheadOutputMs,
+                        onCaptionAnchorChange = viewModel::onCaptionAnchorChange,
+                        onTextLayerAnchorChange = viewModel::onTextLayerAnchorChange,
                         modifier = Modifier.fillMaxSize(),
                     )
                     if (state.seekRequest != null) {
@@ -173,8 +175,11 @@ fun EditorScreen(
                             viewModel.selectSegment(if (id == state.selectedSegmentId) null else id)
                         },
                         onCaptionTap = viewModel::openCaptionEditorFor,
+                        onTextLayerTap = viewModel::openTextLayerEditorFor,
                         onPlayheadDrag = viewModel::onPlayheadDragged,
                         onDividerDrag = viewModel::onDividerDrag,
+                        onCaptionResize = viewModel::onCaptionResize,
+                        onTextLayerResize = viewModel::onTextLayerResize,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
