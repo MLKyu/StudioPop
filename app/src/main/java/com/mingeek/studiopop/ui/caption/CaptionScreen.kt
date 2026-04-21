@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -20,21 +23,23 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mingeek.studiopop.data.caption.Cue
+import com.mingeek.studiopop.data.caption.SpeechToText
+import com.mingeek.studiopop.data.caption.SttEngine
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,6 +84,12 @@ fun CaptionScreen(
                 },
             )
 
+            EngineSelector(
+                options = state.engineOptions,
+                selected = state.selectedEngine,
+                onSelect = viewModel::onEngineSelected,
+            )
+
             OutlinedTextField(
                 value = state.language,
                 onValueChange = viewModel::onLanguageChange,
@@ -91,8 +102,7 @@ fun CaptionScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                val busy = state.phase is CaptionPhase.ExtractingAudio ||
-                        state.phase is CaptionPhase.Transcribing
+                val busy = state.phase is CaptionPhase.Working
                 Button(
                     onClick = viewModel::startTranscription,
                     enabled = state.videoUri != null && !busy,
@@ -138,6 +148,59 @@ private fun VideoSection(hasVideo: Boolean, display: String, onPick: () -> Unit)
 }
 
 @Composable
+private fun EngineSelector(
+    options: List<EngineOption>,
+    selected: SttEngine,
+    onSelect: (SttEngine) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("엔진", style = MaterialTheme.typography.titleSmall)
+            options.forEach { opt ->
+                val ready = opt.availability is SpeechToText.Availability.Ready
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = opt.engine == selected,
+                            enabled = opt.availability !is SpeechToText.Availability.Unsupported &&
+                                    !(opt.availability is SpeechToText.Availability.NeedsSetup &&
+                                            !(opt.availability as SpeechToText.Availability.NeedsSetup).actionable),
+                            role = Role.RadioButton,
+                            onClick = { onSelect(opt.engine) },
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = opt.engine == selected,
+                        onClick = null,
+                    )
+                    Column(modifier = Modifier.padding(start = 8.dp)) {
+                        Text(
+                            opt.engine.displayName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (opt.engine == selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        val sub = when (val av = opt.availability) {
+                            SpeechToText.Availability.Ready -> opt.engine.subtitle
+                            is SpeechToText.Availability.NeedsSetup -> "⚙ ${av.reason}"
+                            is SpeechToText.Availability.Unsupported -> "✕ ${av.reason}"
+                        }
+                        Text(
+                            sub,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (ready) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PhaseIndicator(
     phase: CaptionPhase,
     savedPath: String?,
@@ -154,8 +217,11 @@ private fun PhaseIndicator(
                 }
             }
         }
-        is CaptionPhase.ExtractingAudio -> BusyCard(phase.progressLabel)
-        is CaptionPhase.Transcribing -> BusyCard("Whisper 전사 ${phase.current}/${phase.total}")
+        is CaptionPhase.Working -> {
+            val label = if (phase.total > 1) "${phase.phaseLabel} (${phase.current}/${phase.total})"
+            else phase.phaseLabel
+            BusyCard(label)
+        }
         is CaptionPhase.Error -> {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
