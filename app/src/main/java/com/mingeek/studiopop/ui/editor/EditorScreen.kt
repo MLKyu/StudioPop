@@ -176,6 +176,8 @@ fun EditorScreen(
                         onDividerDrag = viewModel::onDividerDrag,
                         onCaptionResize = viewModel::onCaptionResize,
                         onTextLayerResize = viewModel::onTextLayerResize,
+                        onCaptionTranslate = viewModel::onCaptionTranslate,
+                        onTextLayerTranslate = viewModel::onTextLayerTranslate,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
