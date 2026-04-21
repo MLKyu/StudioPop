@@ -5,6 +5,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,70 +69,82 @@ fun CaptionScreen(
             )
         }
     ) { innerPadding ->
-        Column(
+        // 엔진/모델 선택이 늘어나면 화면을 넘길 수 있어 전체를 LazyColumn 으로 감싸 스크롤 허용.
+        // 자막 Cue 목록도 같은 리스트 안에 items 로 합쳐 중첩 스크롤 회피.
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(innerPadding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            VideoSection(
-                hasVideo = state.videoUri != null,
-                display = state.videoUri?.toString().orEmpty(),
-                onPick = {
-                    pickVideoLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                    )
-                },
-            )
+            item {
+                VideoSection(
+                    hasVideo = state.videoUri != null,
+                    display = state.videoUri?.toString().orEmpty(),
+                    onPick = {
+                        pickVideoLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                        )
+                    },
+                )
+            }
 
-            EngineSelector(
-                options = state.engineOptions,
-                selected = state.selectedEngine,
-                onSelect = viewModel::onEngineSelected,
-            )
+            item {
+                EngineSelector(
+                    options = state.engineOptions,
+                    selected = state.selectedEngine,
+                    onSelect = viewModel::onEngineSelected,
+                )
+            }
 
             if (state.selectedEngine == SttEngine.WHISPER_CPP) {
-                WhisperCppModelPicker(
-                    selected = state.whisperCppVariant,
-                    states = state.whisperCppVariantStates,
-                    onSelect = viewModel::onWhisperCppVariantSelected,
+                item {
+                    WhisperCppModelPicker(
+                        selected = state.whisperCppVariant,
+                        states = state.whisperCppVariantStates,
+                        onSelect = viewModel::onWhisperCppVariantSelected,
+                    )
+                }
+            }
+
+            item {
+                OutlinedTextField(
+                    value = state.language,
+                    onValueChange = viewModel::onLanguageChange,
+                    label = { Text("언어 코드 (예: ko, en, ja)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            OutlinedTextField(
-                value = state.language,
-                onValueChange = viewModel::onLanguageChange,
-                label = { Text("언어 코드 (예: ko, en, ja)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    val busy = state.phase is CaptionPhase.Working
+                    Button(
+                        onClick = viewModel::startTranscription,
+                        enabled = state.videoUri != null && !busy,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("자막 생성") }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                val busy = state.phase is CaptionPhase.Working
-                Button(
-                    onClick = viewModel::startTranscription,
-                    enabled = state.videoUri != null && !busy,
-                    modifier = Modifier.weight(1f),
-                ) { Text("자막 생성") }
-
-                OutlinedButton(
-                    onClick = viewModel::saveSrt,
-                    enabled = state.cues.isNotEmpty(),
-                    modifier = Modifier.weight(1f),
-                ) { Text("SRT 저장") }
+                    OutlinedButton(
+                        onClick = viewModel::saveSrt,
+                        enabled = state.cues.isNotEmpty(),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("SRT 저장") }
+                }
             }
 
-            PhaseIndicator(state.phase, state.savedFilePath, viewModel::dismissError)
+            item {
+                PhaseIndicator(state.phase, state.savedFilePath, viewModel::dismissError)
+            }
 
-            if (state.cues.isNotEmpty()) {
-                CueList(
-                    cues = state.cues,
-                    onCueEdit = viewModel::updateCueText,
-                )
+            // Cue 리스트를 같은 LazyColumn 의 아이템으로 — 중첩 스크롤 회피
+            itemsIndexed(state.cues, key = { _, c -> "${c.startMs}-${c.endMs}-${c.index}" }) { idx, cue ->
+                CueItem(cue = cue, onChange = { text -> viewModel.updateCueText(idx, text) })
             }
         }
     }
@@ -302,21 +315,6 @@ private fun BusyCard(label: String) {
         ) {
             CircularProgressIndicator(modifier = Modifier.padding(end = 4.dp))
             Text(label)
-        }
-    }
-}
-
-@Composable
-private fun CueList(
-    cues: List<Cue>,
-    onCueEdit: (Int, String) -> Unit,
-) {
-    LazyColumn(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        itemsIndexed(cues, key = { _, c -> "${c.startMs}-${c.endMs}-${c.index}" }) { idx, cue ->
-            CueItem(cue = cue, onChange = { onCueEdit(idx, it) })
         }
     }
 }
