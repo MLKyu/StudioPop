@@ -160,6 +160,7 @@ fun EditorScreen(
                         },
                         onCaptionTap = viewModel::openCaptionEditorFor,
                         onPlayheadDrag = viewModel::onPlayheadDragged,
+                        onDividerDrag = viewModel::onDividerDrag,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

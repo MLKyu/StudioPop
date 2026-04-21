@@ -165,6 +165,15 @@ class EditorViewModel(
         }
     }
 
+    fun onDividerDrag(prevSegId: String, nextSegId: String, sourceDeltaMs: Long) {
+        _uiState.update {
+            val newTimeline = it.timeline.moveBoundary(prevSegId, nextSegId, sourceDeltaMs)
+            // 경계 이동으로 출력 길이가 바뀌었을 수 있으므로 플레이헤드 보정
+            val newPlayhead = it.playheadOutputMs.coerceAtMost(newTimeline.outputDurationMs)
+            it.copy(timeline = newTimeline, playheadOutputMs = newPlayhead)
+        }
+    }
+
     fun deleteSelectedSegment() {
         val id = _uiState.value.selectedSegmentId ?: return
         _uiState.update {
