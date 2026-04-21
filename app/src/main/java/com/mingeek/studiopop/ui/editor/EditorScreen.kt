@@ -100,7 +100,11 @@ fun EditorScreen(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState()),
         ) {
-            if (state.videoUri == null) {
+            val addVideoLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.PickVisualMedia()
+            ) { uri -> viewModel.addVideoToTimeline(uri) }
+
+            if (!state.hasVideo) {
                 EmptyVideoPicker(
                     onPick = {
                         pickVideoLauncher.launch(
@@ -118,7 +122,6 @@ fun EditorScreen(
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 ) {
                     PreviewPlayer(
-                        sourceUri = state.videoUri!!,
                         timeline = state.timeline,
                         onPositionChange = { output ->
                             if (state.isPlaying) viewModel.onPlayheadChange(output)
@@ -148,6 +151,11 @@ fun EditorScreen(
                     onDelete = viewModel::deleteSelectedSegment,
                     onAddCaption = viewModel::openCaptionEditorForNew,
                     onAddTextLayer = viewModel::openTextLayerEditorForNew,
+                    onAddVideo = {
+                        addVideoLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                        )
+                    },
                 )
 
                 Card(
@@ -157,8 +165,7 @@ fun EditorScreen(
                 ) {
                     TimelineView(
                         timeline = state.timeline,
-                        sourceDurationMs = state.sourceDurationMs,
-                        frameStrip = state.frameStrip,
+                        frameStrips = state.frameStrips,
                         playheadOutputMs = state.playheadOutputMs,
                         selectedSegmentId = state.selectedSegmentId,
                         selectedCaptionId = state.editingItem?.id,
@@ -244,6 +251,7 @@ private fun ToolbarRow(
     onDelete: () -> Unit,
     onAddCaption: () -> Unit,
     onAddTextLayer: () -> Unit,
+    onAddVideo: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -279,6 +287,10 @@ private fun ToolbarRow(
         FilledTonalButton(onClick = onAddTextLayer) {
             Icon(Icons.Outlined.Add, contentDescription = null)
             Text(" 텍스트", modifier = Modifier.padding(start = 4.dp))
+        }
+        FilledTonalButton(onClick = onAddVideo) {
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Text(" 영상", modifier = Modifier.padding(start = 4.dp))
         }
     }
 }

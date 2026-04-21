@@ -3,16 +3,19 @@ package com.mingeek.studiopop.ui.shorts
 import android.app.Application
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import androidx.core.net.toUri
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.StudioPopApp
 import com.mingeek.studiopop.data.caption.Cue
 import com.mingeek.studiopop.data.caption.Srt
+import com.mingeek.studiopop.data.editor.Timeline
+import com.mingeek.studiopop.data.editor.TimelineCaption
+import com.mingeek.studiopop.data.editor.TimelineSegment
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AssetType
 import com.mingeek.studiopop.data.project.ProjectRepository
@@ -31,20 +34,21 @@ sealed interface ShortsPhase {
     data class Error(val message: String) : ShortsPhase
 }
 
+data class ShortsClip(val uri: Uri, val durationMs: Long)
+
 data class ShortsUiState(
-    val videoUri: Uri? = null,
-    val durationMs: Long = 0L,
-    val trimStartMs: Long = 0L,
-    val trimEndMs: Long = 0L,
+    val clips: List<ShortsClip> = emptyList(),
     val srtUri: Uri? = null,
     val cues: List<Cue> = emptyList(),
     val burnCaptions: Boolean = true,
     val phase: ShortsPhase = ShortsPhase.Idle,
 ) {
-    val durationSelectedMs: Long get() = (trimEndMs - trimStartMs).coerceAtLeast(0L)
+    val totalDurationMs: Long get() = clips.sumOf { it.durationMs }
+    val willTruncate: Boolean get() = totalDurationMs > SHORTS_MAX_MS
+    val finalDurationMs: Long get() = totalDurationMs.coerceAtMost(SHORTS_MAX_MS)
     val canExport: Boolean
-        get() = videoUri != null &&
-                durationSelectedMs in 1..SHORTS_MAX_MS &&
+        get() = clips.isNotEmpty() &&
+                totalDurationMs > 0 &&
                 phase !is ShortsPhase.Running
 
     companion object {
@@ -69,7 +73,7 @@ class ShortsViewModel(
         projectId = id
         viewModelScope.launch {
             val project = projectRepository.getProject(id) ?: return@launch
-            onVideoSelected(project.sourceVideoUri.toUri())
+            addClip(project.sourceVideoUri.toUri())
             val srtAsset = projectRepository.latestAsset(id, AssetType.CAPTION_SRT)
             if (srtAsset != null) {
                 onSrtSelected(java.io.File(srtAsset.value).toUri())
@@ -77,28 +81,27 @@ class ShortsViewModel(
         }
     }
 
-    fun onVideoSelected(uri: Uri?) {
+    /**
+     * 클립 추가. URI 중복 체크 없이 append (같은 영상 두 번 넣기도 허용).
+     */
+    fun addClip(uri: Uri?) {
         if (uri == null) return
         viewModelScope.launch {
             val duration = withContext(Dispatchers.IO) { readDurationMs(uri) }
-            val end = duration.coerceAtMost(ShortsUiState.SHORTS_MAX_MS)
+            if (duration <= 0) return@launch
             _uiState.update {
                 it.copy(
-                    videoUri = uri,
-                    durationMs = duration,
-                    trimStartMs = 0L,
-                    trimEndMs = end,
+                    clips = it.clips + ShortsClip(uri, duration),
                     phase = ShortsPhase.Idle,
                 )
             }
         }
     }
 
-    fun onTrimChange(startMs: Long, endMs: Long) {
+    fun removeClip(index: Int) {
         _uiState.update {
-            val s = startMs.coerceIn(0L, it.durationMs)
-            val e = endMs.coerceIn(s, (s + ShortsUiState.SHORTS_MAX_MS).coerceAtMost(it.durationMs))
-            it.copy(trimStartMs = s, trimEndMs = e)
+            if (index !in it.clips.indices) it
+            else it.copy(clips = it.clips.toMutableList().apply { removeAt(index) })
         }
     }
 
@@ -125,21 +128,30 @@ class ShortsViewModel(
 
     fun startExport() {
         val state = _uiState.value
-        val uri = state.videoUri ?: return
+        if (state.clips.isEmpty()) return
 
         viewModelScope.launch {
             _uiState.update { it.copy(phase = ShortsPhase.Running(0f)) }
 
-            val cuesArg = if (state.burnCaptions) state.cues.ifEmpty { null } else null
+            // 60초 초과면 끝에서 잘라 맞춤. 클립 순차로 채우고 60초 차면 마지막 클립 trim.
+            val segments = buildSegments(state.clips, ShortsUiState.SHORTS_MAX_MS)
 
-            videoEditor.export(
-                spec = VideoEditor.EditSpec(
-                    sourceUri = uri,
-                    trimStartMs = state.trimStartMs,
-                    trimEndMs = state.trimEndMs,
-                    captionCues = cuesArg,
-                    aspectRatio = 9f / 16f,
-                ),
+            // 자막은 첫 클립 기준으로만 적용 (보통 clip 1 의 SRT). 나머지 클립 source-time 과
+            // 겹치는 cue 는 제외. Timeline.toOutputCues 가 자동 처리.
+            val timelineCaptions =
+                if (state.burnCaptions) state.cues.map {
+                    TimelineCaption(
+                        sourceStartMs = it.startMs,
+                        sourceEndMs = it.endMs,
+                        text = it.text,
+                    )
+                } else emptyList()
+
+            val timeline = Timeline(segments = segments, captions = timelineCaptions)
+
+            videoEditor.exportTimeline(
+                timeline = timeline,
+                aspectRatio = 9f / 16f,
                 onProgress = { p ->
                     _uiState.update {
                         if (it.phase is ShortsPhase.Running) it.copy(phase = ShortsPhase.Running(p))
@@ -154,7 +166,7 @@ class ShortsViewModel(
                             projectId = pid,
                             type = AssetType.SHORTS,
                             value = file.absolutePath,
-                            label = "숏츠",
+                            label = "숏츠 (${state.clips.size}클립)",
                         )
                     }
                 },
@@ -165,6 +177,26 @@ class ShortsViewModel(
                 },
             )
         }
+    }
+
+    /**
+     * clips 을 차례로 TimelineSegment 로 변환. 누적 길이가 maxMs 를 넘으면 마지막
+     * 세그먼트를 잘라 정확히 maxMs 에 맞춤.
+     */
+    private fun buildSegments(clips: List<ShortsClip>, maxMs: Long): List<TimelineSegment> {
+        val result = mutableListOf<TimelineSegment>()
+        var remaining = maxMs
+        for (clip in clips) {
+            if (remaining <= 0) break
+            val take = minOf(clip.durationMs, remaining)
+            result += TimelineSegment(
+                sourceUri = clip.uri,
+                sourceStartMs = 0L,
+                sourceEndMs = take,
+            )
+            remaining -= take
+        }
+        return result
     }
 
     fun dismissMessage() = _uiState.update { it.copy(phase = ShortsPhase.Idle) }

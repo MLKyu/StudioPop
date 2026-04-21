@@ -79,13 +79,12 @@ class VideoEditor(
 
     /**
      * 타임라인 기반 export.
-     * - 세그먼트들을 concat
+     * - 세그먼트들을 (각 segment.sourceUri 의 [start, end] 구간) concat
      * - 자막(style별 그룹) 과 텍스트 레이어를 멀티 오버레이로 합성
      * - TransitionSettings.enabled 이면 세그먼트 경계에서 페이드-투-블랙
      * - AudioTrack 이 있으면 원본 오디오 제거 + BGM sequence 추가
      */
     suspend fun exportTimeline(
-        sourceUri: Uri,
         timeline: Timeline,
         aspectRatio: Float? = null,
         onProgress: (Float) -> Unit = {},
@@ -97,7 +96,7 @@ class VideoEditor(
             val removeOriginalAudio = timeline.audioTrack?.replaceOriginal == true
             val videoItems = timeline.segments.map { seg ->
                 val mediaItem = MediaItem.Builder()
-                    .setUri(sourceUri)
+                    .setUri(seg.sourceUri)
                     .setClippingConfiguration(
                         MediaItem.ClippingConfiguration.Builder()
                             .setStartPositionMs(seg.sourceStartMs)

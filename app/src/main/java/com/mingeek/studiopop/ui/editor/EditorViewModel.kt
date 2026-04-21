@@ -41,10 +41,9 @@ sealed interface ExportPhase {
 enum class EditKind { CAPTION, TEXT_LAYER }
 
 data class EditorUiState(
-    val videoUri: Uri? = null,
-    val sourceDurationMs: Long = 0L,
     val timeline: Timeline = Timeline(segments = emptyList()),
-    val frameStrip: List<Bitmap> = emptyList(),
+    /** 영상 Uri → (총 길이, 프레임 스트립). 세그먼트가 sourceUri 별로 조회. */
+    val frameStrips: Map<Uri, Pair<Long, List<Bitmap>>> = emptyMap(),
     val playheadOutputMs: Long = 0L,
     val isPlaying: Boolean = false,
     val seekRequest: Long? = null,
@@ -53,10 +52,9 @@ data class EditorUiState(
     val editingKind: EditKind? = null,
     val phase: ExportPhase = ExportPhase.Idle,
 ) {
+    val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
-        get() = videoUri != null &&
-                timeline.segments.isNotEmpty() &&
-                phase !is ExportPhase.Running
+        get() = hasVideo && phase !is ExportPhase.Running
 }
 
 @UnstableApi
@@ -77,34 +75,60 @@ class EditorViewModel(
         projectId = id
         viewModelScope.launch {
             val project = projectRepository.getProject(id) ?: return@launch
-            loadVideo(project.sourceVideoUri.toUri())
+            replaceWithVideo(project.sourceVideoUri.toUri())
             val srtAsset = projectRepository.latestAsset(id, AssetType.CAPTION_SRT)
             srtAsset?.let { importSrtFromPath(it.value) }
         }
     }
 
+    /**
+     * 타임라인을 이 영상 단독으로 리셋. 홈 "영상 변경" 에서 사용.
+     */
     fun onVideoSelected(uri: Uri?) {
         if (uri == null) return
-        viewModelScope.launch { loadVideo(uri) }
+        viewModelScope.launch { replaceWithVideo(uri) }
     }
 
-    private suspend fun loadVideo(uri: Uri) {
+    /**
+     * 현재 타임라인 끝에 이 영상을 통째로 추가. 여러 영상을 이어붙일 때.
+     */
+    fun addVideoToTimeline(uri: Uri?) {
+        if (uri == null) return
+        viewModelScope.launch {
+            val duration = withContext(Dispatchers.IO) { readDurationMs(uri) }
+            if (duration <= 0) return@launch
+            _uiState.update {
+                it.copy(
+                    timeline = it.timeline.appendVideo(uri, duration),
+                    phase = ExportPhase.Idle,
+                )
+            }
+            ensureFrameStrip(uri, duration)
+        }
+    }
+
+    private suspend fun replaceWithVideo(uri: Uri) {
         val duration = withContext(Dispatchers.IO) { readDurationMs(uri) }
         _uiState.update {
             it.copy(
-                videoUri = uri,
-                sourceDurationMs = duration,
-                timeline = Timeline.single(duration),
+                timeline = Timeline.single(uri, duration),
                 playheadOutputMs = 0L,
                 isPlaying = false,
                 selectedSegmentId = null,
-                frameStrip = emptyList(),
+                frameStrips = emptyMap(),
                 phase = ExportPhase.Idle,
             )
         }
+        ensureFrameStrip(uri, duration)
+    }
+
+    private fun ensureFrameStrip(uri: Uri, duration: Long) {
+        if (_uiState.value.frameStrips.containsKey(uri)) return
         viewModelScope.launch {
             val strip = frameStripGenerator.generate(uri, duration)
-            _uiState.update { it.copy(frameStrip = strip) }
+            _uiState.update { s ->
+                s.copy(frameStrips = s.frameStrips + (uri to (duration to strip)))
+            }
         }
     }
 
@@ -320,12 +344,11 @@ class EditorViewModel(
     // --- Export ---
     fun startExport() {
         val state = _uiState.value
-        val uri = state.videoUri ?: return
+        if (!state.hasVideo) return
 
         viewModelScope.launch {
             _uiState.update { it.copy(phase = ExportPhase.Running(0f)) }
             videoEditor.exportTimeline(
-                sourceUri = uri,
                 timeline = state.timeline,
                 onProgress = { p ->
                     _uiState.update { s ->
