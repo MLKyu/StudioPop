@@ -3,6 +3,11 @@ package com.mingeek.studiopop.ui.editor
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +46,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -75,23 +83,32 @@ fun EditorScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri -> viewModel.onBgmPicked(uri) }
 
+    // 프리뷰 빈 영역 탭 → TopAppBar 숨김/노출 토글. 편집 중 더 많은 화면 공간 확보용.
+    var toolbarVisible by remember { mutableStateOf(true) }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("편집기") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+            AnimatedVisibility(
+                visible = toolbarVisible,
+                enter = slideInVertically(initialOffsetY = { -it }),
+                exit = slideOutVertically(targetOffsetY = { -it }),
+            ) {
+                TopAppBar(
+                    title = { Text("편집기") },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                        }
+                    },
+                    actions = {
+                        OutlinedButton(
+                            onClick = viewModel::startExport,
+                            enabled = state.canExport,
+                            modifier = Modifier.padding(end = 8.dp),
+                        ) { Text("내보내기") }
                     }
-                },
-                actions = {
-                    OutlinedButton(
-                        onClick = viewModel::startExport,
-                        enabled = state.canExport,
-                        modifier = Modifier.padding(end = 8.dp),
-                    ) { Text("내보내기") }
-                }
-            )
+                )
+            }
         }
     ) { innerPadding ->
         Column(
@@ -114,12 +131,19 @@ fun EditorScreen(
                     onPickSrt = { pickSrtLauncher.launch("*/*") },
                 )
             } else {
+                val toolbarToggleSource = remember { MutableInteractionSource() }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 300.dp)
                         .aspectRatio(16f / 9f)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        // 빈 영역 탭 → TopAppBar 토글. 자막/텍스트 오버레이는 자기 pointerInput
+                        // 에서 이벤트 먼저 소비하므로 드래그/탭이 여기 내려오지 않아 무해.
+                        .clickable(
+                            interactionSource = toolbarToggleSource,
+                            indication = null,
+                        ) { toolbarVisible = !toolbarVisible },
                 ) {
                     PreviewPlayer(
                         timeline = state.timeline,
