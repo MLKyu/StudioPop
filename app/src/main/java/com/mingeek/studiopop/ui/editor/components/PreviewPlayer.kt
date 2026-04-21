@@ -84,16 +84,21 @@ fun PreviewPlayer(
     )
 }
 
-private fun TimelineSegment.toMediaItem(): MediaItem =
-    MediaItem.Builder()
+private fun TimelineSegment.toMediaItem(): MediaItem {
+    // setStartPositionMs 는 non-negative 를 요구 — 상위 로직 버그로 음수가 흘러들어올 수 있어
+    // 방어적으로 clamp 해 crash 방지.
+    val start = sourceStartMs.coerceAtLeast(0L)
+    val end = sourceEndMs.coerceAtLeast(start)
+    return MediaItem.Builder()
         .setUri(sourceUri)
         .setClippingConfiguration(
             MediaItem.ClippingConfiguration.Builder()
-                .setStartPositionMs(sourceStartMs)
-                .setEndPositionMs(sourceEndMs)
+                .setStartPositionMs(start)
+                .setEndPositionMs(end)
                 .build()
         )
         .build()
+}
 
 /**
  * raw output ms 로 seek. raw → source 변환 후 effective 세그먼트 중 해당 source 위치를 포함하는

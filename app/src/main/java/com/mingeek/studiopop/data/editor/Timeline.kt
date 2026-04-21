@@ -157,6 +157,9 @@ data class Timeline(
         if (sourceDeltaMs == 0L) return this
         val prev = segments.firstOrNull { it.id == prevSegId } ?: return this
         val next = segments.firstOrNull { it.id == nextSegId } ?: return this
+        // 서로 다른 영상 사이의 경계는 공유 source 시간축이 없어 의미가 없음 (no-op).
+        // 과거 이 경로로 newNextStart 가 음수가 되어 MediaItem.ClippingConfiguration 이 crash.
+        if (prev.sourceUri != next.sourceUri) return this
 
         val gap = next.sourceStartMs - prev.sourceEndMs // 0 if source-adjacent
 
