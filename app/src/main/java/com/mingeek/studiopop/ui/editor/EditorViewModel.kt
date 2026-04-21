@@ -209,8 +209,12 @@ class EditorViewModel(
     fun onCutRangeResize(id: String, startDeltaMs: Long, endDeltaMs: Long) {
         _uiState.update { state ->
             val cut = state.timeline.cutRanges.firstOrNull { it.id == id } ?: return@update state
-            val newStart = (cut.sourceStartMs + startDeltaMs).coerceAtLeast(0L)
-            val newEnd = (cut.sourceEndMs + endDeltaMs).coerceAtLeast(newStart + MIN_OVERLAY_DURATION_MS)
+            val (minStart, maxEnd) = sourceBoundsFor(state.timeline, cut.sourceUri)
+                ?: return@update state
+            val newStart = (cut.sourceStartMs + startDeltaMs)
+                .coerceIn(minStart, maxEnd - MIN_OVERLAY_DURATION_MS)
+            val newEnd = (cut.sourceEndMs + endDeltaMs)
+                .coerceIn(newStart + MIN_OVERLAY_DURATION_MS, maxEnd)
             state.copy(timeline = state.timeline.updateCutRange(cut.copy(sourceStartMs = newStart, sourceEndMs = newEnd)))
         }
     }
@@ -218,12 +222,22 @@ class EditorViewModel(
     fun onCutRangeTranslate(id: String, deltaMs: Long) {
         _uiState.update { state ->
             val cut = state.timeline.cutRanges.firstOrNull { it.id == id } ?: return@update state
-            val newStart = (cut.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val (minStart, maxEnd) = sourceBoundsFor(state.timeline, cut.sourceUri)
+                ?: return@update state
             val duration = cut.sourceEndMs - cut.sourceStartMs
+            val newStart = (cut.sourceStartMs + deltaMs)
+                .coerceIn(minStart, maxEnd - duration)
             state.copy(timeline = state.timeline.updateCutRange(
                 cut.copy(sourceStartMs = newStart, sourceEndMs = newStart + duration)
             ))
         }
+    }
+
+    /** 주어진 sourceUri 를 참조하는 segment 들의 source 범위 합집합 [min, max]. */
+    private fun sourceBoundsFor(timeline: Timeline, uri: Uri): Pair<Long, Long>? {
+        val matching = timeline.segments.filter { it.sourceUri == uri }
+        if (matching.isEmpty()) return null
+        return matching.minOf { it.sourceStartMs } to matching.maxOf { it.sourceEndMs }
     }
 
     fun deleteCutRange(id: String) {
