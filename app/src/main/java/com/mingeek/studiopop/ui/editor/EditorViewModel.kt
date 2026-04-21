@@ -47,7 +47,6 @@ data class EditorUiState(
     val playheadOutputMs: Long = 0L,
     val isPlaying: Boolean = false,
     val seekRequest: Long? = null,
-    val selectedSegmentId: String? = null,
     val editingItem: EditableTextItem? = null,
     val editingKind: EditKind? = null,
     val phase: ExportPhase = ExportPhase.Idle,
@@ -55,6 +54,7 @@ data class EditorUiState(
     val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
         get() = hasVideo && phase !is ExportPhase.Running
+    val canDelete: Boolean get() = timeline.segments.size > 1
 }
 
 @UnstableApi
@@ -114,7 +114,6 @@ class EditorViewModel(
                 timeline = Timeline.single(uri, duration),
                 playheadOutputMs = 0L,
                 isPlaying = false,
-                selectedSegmentId = null,
                 frameStrips = emptyMap(),
                 phase = ExportPhase.Idle,
             )
@@ -181,8 +180,6 @@ class EditorViewModel(
     fun consumeSeekRequest() = _uiState.update { it.copy(seekRequest = null) }
 
     // --- 세그먼트 조작 ---
-    fun selectSegment(id: String?) = _uiState.update { it.copy(selectedSegmentId = id) }
-
     fun splitAtPlayhead() {
         _uiState.update {
             it.copy(timeline = it.timeline.splitAtOutputMs(it.playheadOutputMs))
@@ -198,16 +195,20 @@ class EditorViewModel(
         }
     }
 
-    fun deleteSelectedSegment() {
-        val id = _uiState.value.selectedSegmentId ?: return
+    /**
+     * 현재 플레이헤드가 위치한 세그먼트를 삭제. CapCut 의 "현재 구간 삭제" 와 동일.
+     */
+    fun deleteCurrentSegment() {
+        val state = _uiState.value
+        if (state.timeline.segments.size <= 1) return
+        val (seg, _) = state.timeline.mapOutputToSource(state.playheadOutputMs) ?: return
         _uiState.update {
-            val newTimeline = it.timeline.deleteSegment(id)
+            val newTimeline = it.timeline.deleteSegment(seg.id)
             val newPlayhead = it.playheadOutputMs.coerceAtMost(newTimeline.outputDurationMs)
             it.copy(
                 timeline = newTimeline,
                 playheadOutputMs = newPlayhead,
                 seekRequest = newPlayhead,
-                selectedSegmentId = null,
             )
         }
     }

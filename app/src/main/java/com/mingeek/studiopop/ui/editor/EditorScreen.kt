@@ -147,10 +147,10 @@ fun EditorScreen(
                     isPlaying = state.isPlaying,
                     playheadMs = state.playheadOutputMs,
                     totalOutputMs = state.timeline.outputDurationMs,
-                    canDelete = state.selectedSegmentId != null && state.timeline.segments.size > 1,
+                    canDelete = state.canDelete,
                     onTogglePlay = viewModel::togglePlay,
                     onSplit = viewModel::splitAtPlayhead,
-                    onDelete = viewModel::deleteSelectedSegment,
+                    onDelete = viewModel::deleteCurrentSegment,
                     onAddCaption = viewModel::openCaptionEditorForNew,
                     onAddTextLayer = viewModel::openTextLayerEditorForNew,
                     onAddVideo = {
@@ -169,11 +169,7 @@ fun EditorScreen(
                         timeline = state.timeline,
                         frameStrips = state.frameStrips,
                         playheadOutputMs = state.playheadOutputMs,
-                        selectedSegmentId = state.selectedSegmentId,
                         selectedCaptionId = state.editingItem?.id,
-                        onSegmentTap = { id ->
-                            viewModel.selectSegment(if (id == state.selectedSegmentId) null else id)
-                        },
                         onCaptionTap = viewModel::openCaptionEditorFor,
                         onTextLayerTap = viewModel::openTextLayerEditorFor,
                         onPlayheadDrag = viewModel::onPlayheadDragged,
