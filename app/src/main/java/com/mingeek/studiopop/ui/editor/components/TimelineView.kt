@@ -151,14 +151,18 @@ private fun SegmentBlock(
     val density = LocalDensity.current
     val widthDp = with(density) { (segment.durationMs * pxPerMs).toDp() }
 
-    // 이 세그먼트에 해당하는 썸네일 인덱스 범위 계산
+    // 이 세그먼트에 해당하는 썸네일 인덱스 범위 계산.
+    // frameStrip 은 백그라운드로 생성되므로 초기에는 비어 있을 수 있음 → 가드 필수.
     val n = frameStrip.size
-    val step = if (n > 0 && totalSourceMs > 0) totalSourceMs / n else Long.MAX_VALUE
-    val startIdx = if (step > 0) (segment.sourceStartMs / step).toInt().coerceIn(0, n - 1) else 0
-    val endIdx =
-        if (step > 0) ((segment.sourceEndMs - 1) / step).toInt().coerceIn(startIdx, n - 1) else 0
-    val framesForSeg = if (frameStrip.isEmpty()) emptyList()
-    else frameStrip.subList(startIdx, endIdx + 1)
+    val hasFrames = n > 0 && totalSourceMs > 0
+    val step: Long = if (hasFrames) (totalSourceMs / n).coerceAtLeast(1L) else 0L
+    val framesForSeg: List<Bitmap> = if (!hasFrames) {
+        emptyList()
+    } else {
+        val startIdx = (segment.sourceStartMs / step).toInt().coerceIn(0, n - 1)
+        val endIdx = ((segment.sourceEndMs - 1) / step).toInt().coerceIn(startIdx, n - 1)
+        frameStrip.subList(startIdx, endIdx + 1)
+    }
 
     Box(
         modifier = Modifier
