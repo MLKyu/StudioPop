@@ -105,6 +105,39 @@ data class Timeline(
         return copy(segments = segments.filter { it.id != id })
     }
 
+    /**
+     * 두 인접 세그먼트 사이의 경계를 [sourceDeltaMs] 만큼 이동.
+     * - source-adjacent (prev.end == next.start) 이면 둘을 같이 이동해 분할점을 옮기는 느낌
+     * - gap 이 있으면(사이에 삭제된 영역) gap 폭을 유지한 채 둘 다 평행 이동
+     * - 각 세그먼트 최소 길이 [MIN_DURATION_MS] 보장
+     */
+    fun moveBoundary(prevSegId: String, nextSegId: String, sourceDeltaMs: Long): Timeline {
+        if (sourceDeltaMs == 0L) return this
+        val prev = segments.firstOrNull { it.id == prevSegId } ?: return this
+        val next = segments.firstOrNull { it.id == nextSegId } ?: return this
+
+        val gap = next.sourceStartMs - prev.sourceEndMs // 0 if source-adjacent
+
+        // 경계 이동 범위: prev 를 최소 MIN 만큼 남기고, next 도 최소 MIN 남기게
+        val minNewPrevEnd = prev.sourceStartMs + MIN_DURATION_MS
+        val maxNewPrevEnd = next.sourceEndMs - gap - MIN_DURATION_MS
+        val newPrevEnd = (prev.sourceEndMs + sourceDeltaMs)
+            .coerceIn(minNewPrevEnd, maxNewPrevEnd)
+        val actualDelta = newPrevEnd - prev.sourceEndMs
+        if (actualDelta == 0L) return this
+
+        val newNextStart = next.sourceStartMs + actualDelta
+
+        val updated = segments.map { s ->
+            when (s.id) {
+                prevSegId -> s.copy(sourceEndMs = newPrevEnd)
+                nextSegId -> s.copy(sourceStartMs = newNextStart)
+                else -> s
+            }
+        }
+        return copy(segments = updated)
+    }
+
     fun addCaption(caption: TimelineCaption): Timeline =
         copy(captions = captions + caption)
 
@@ -130,6 +163,9 @@ data class Timeline(
      * 원본 영상 전체를 한 세그먼트로 담은 초기 타임라인.
      */
     companion object {
+        /** moveBoundary 시 각 세그먼트 보장할 최소 길이 */
+        const val MIN_DURATION_MS = 100L
+
         fun single(sourceDurationMs: Long, captions: List<TimelineCaption> = emptyList()): Timeline =
             Timeline(
                 segments = listOf(

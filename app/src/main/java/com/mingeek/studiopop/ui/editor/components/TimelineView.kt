@@ -6,11 +6,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -20,6 +20,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -52,6 +56,7 @@ fun TimelineView(
     onSegmentTap: (String) -> Unit,
     onCaptionTap: (String) -> Unit,
     onPlayheadDrag: (Long) -> Unit,
+    onDividerDrag: (prevSegId: String, nextSegId: String, sourceDeltaMs: Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -65,7 +70,7 @@ fun TimelineView(
         Box(modifier = Modifier.width(totalWidthDp).fillMaxHeight()) {
             // 1) 세그먼트 + 썸네일 레이어
             Row(modifier = Modifier.fillMaxHeight()) {
-                timeline.segments.forEach { seg ->
+                timeline.segments.forEachIndexed { idx, seg ->
                     SegmentBlock(
                         segment = seg,
                         totalSourceMs = sourceDurationMs,
@@ -74,13 +79,13 @@ fun TimelineView(
                         pxPerMs = pxPerMs,
                         onTap = { onSegmentTap(seg.id) },
                     )
-                    // 세그먼트 사이 구분선 (마지막 제외)
-                    if (seg != timeline.segments.last()) {
-                        Spacer(
-                            Modifier
-                                .width(SPLIT_DIVIDER_WIDTH_DP.dp)
-                                .fillMaxHeight()
-                                .background(Color(0xFFFFAB00))
+                    // 세그먼트 사이 드래그 가능 경계(마지막 제외)
+                    if (idx < timeline.segments.lastIndex) {
+                        DraggableDivider(
+                            prevSegId = seg.id,
+                            nextSegId = timeline.segments[idx + 1].id,
+                            pxPerMs = pxPerMs,
+                            onDrag = onDividerDrag,
                         )
                     }
                 }
@@ -136,6 +141,47 @@ fun TimelineView(
                 }
             }
         }
+    }
+}
+
+/**
+ * 두 세그먼트 사이의 드래그 가능 경계.
+ * 가로 드래그 시 픽셀 delta 를 ms 로 변환해 [onDrag] 호출.
+ * 히트 영역은 넓게(14dp), 가운데에 얇은(3dp) 노란색 선을 그려 시각화.
+ */
+@Composable
+private fun DraggableDivider(
+    prevSegId: String,
+    nextSegId: String,
+    pxPerMs: Float,
+    onDrag: (String, String, Long) -> Unit,
+) {
+    var isDragging by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+
+    Box(
+        modifier = Modifier
+            .width(DIVIDER_HIT_WIDTH_DP.dp)
+            .fillMaxHeight()
+            .pointerInput(prevSegId, nextSegId, pxPerMs) {
+                detectDragGestures(
+                    onDragStart = { isDragging = true },
+                    onDragEnd   = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                ) { change, dragAmount ->
+                    change.consume()
+                    val deltaMs = (dragAmount.x / pxPerMs).toLong()
+                    if (deltaMs != 0L) onDrag(prevSegId, nextSegId, deltaMs)
+                }
+            },
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(if (isDragging) 6.dp else 3.dp)
+                .fillMaxHeight()
+                .background(if (isDragging) Color(0xFFFFC400) else Color(0xFFFFAB00)),
+        )
     }
 }
 
@@ -245,5 +291,5 @@ private fun CaptionBar(
 
 private const val DEFAULT_PX_PER_MS = 0.15f // 1초 = 150px
 private const val TIMELINE_HEIGHT_DP = 120
-private const val SPLIT_DIVIDER_WIDTH_DP = 2
+private const val DIVIDER_HIT_WIDTH_DP = 14
 private const val CAPTION_BAR_HEIGHT_DP = 22
