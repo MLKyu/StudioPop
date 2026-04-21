@@ -22,8 +22,12 @@ import com.mingeek.studiopop.data.editor.TimelineSegment
 import kotlinx.coroutines.delay
 
 /**
- * Timeline 세그먼트를 ExoPlayer MediaItem 리스트로 변환해 자동 concat 재생하는 Compose 프리뷰.
- * 세그먼트별로 sourceUri 가 달라도 이어서 재생됨.
+ * Timeline 의 **effectiveSegments()** (= cut 적용된 결과) 를 ExoPlayer MediaItem 리스트로
+ * 변환해 자동 concat 재생. 프리뷰에서 실제로 cut 이 적용된 결과를 확인 가능.
+ *
+ * 플레이헤드는 여전히 **raw output ms** 로 표시되어야 타임라인의 cut 막대가 의미를 가지므로,
+ * 폴링 시 effective player 위치 → source ms → raw output ms 로 역매핑한다.
+ * 외부 seek 요청도 raw output ms → effective 위치로 매핑 (cut 구간으로 seek 시 다음 effective 시작으로 스냅).
  */
 @UnstableApi
 @Composable
@@ -37,16 +41,17 @@ fun PreviewPlayer(
     val context = LocalContext.current
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
 
-    // 프리뷰는 raw segments 재생 (cut 은 export 에서만 적용됨 — 시각 힌트만 타임라인에 노출)
-    LaunchedEffect(timeline.segments) {
-        val items = timeline.segments.map { it.toMediaItem() }
+    val effectiveSegments = remember(timeline) { timeline.effectiveSegments() }
+
+    LaunchedEffect(effectiveSegments) {
+        val items = effectiveSegments.map { it.toMediaItem() }
         exoPlayer.setMediaItems(items, /* resetPosition = */ false)
         exoPlayer.prepare()
     }
 
-    // 외부 seek 요청 반영
+    // 외부 seek 요청 반영 (raw output ms → effective 위치)
     LaunchedEffect(seekToOutputMs) {
-        seekToOutputMs?.let { exoPlayer.seekToOutput(timeline, it) }
+        seekToOutputMs?.let { exoPlayer.seekToRawOutput(timeline, effectiveSegments, it) }
     }
 
     // 재생/일시정지
@@ -54,10 +59,10 @@ fun PreviewPlayer(
         exoPlayer.playWhenReady = isPlaying
     }
 
-    // 현재 위치 폴링 → output ms 로 변환해 콜백
-    LaunchedEffect(exoPlayer) {
+    // 현재 위치 폴링 → raw output ms 로 역매핑해 콜백
+    LaunchedEffect(exoPlayer, effectiveSegments) {
         while (true) {
-            val outputMs = exoPlayer.currentOutputMs(timeline)
+            val outputMs = exoPlayer.currentRawOutputMs(timeline, effectiveSegments)
             onPositionChange(outputMs)
             delay(50L)
         }
@@ -91,27 +96,46 @@ private fun TimelineSegment.toMediaItem(): MediaItem =
         .build()
 
 /**
- * output 기준 ms 로 seek. 해당 세그먼트 인덱스 + segment 내 offset 으로 변환.
+ * raw output ms 로 seek. raw → source 변환 후 effective 세그먼트 중 해당 source 위치를 포함하는
+ * 항목을 찾아 seek. cut 구간에 떨어지면 다음 effective 세그먼트의 시작으로 스냅.
  */
-private fun Player.seekToOutput(timeline: Timeline, outputMs: Long) {
-    var accumulated = 0L
-    timeline.segments.forEachIndexed { idx, seg ->
-        val d = seg.durationMs
-        if (outputMs in accumulated..(accumulated + d)) {
-            seekTo(idx, outputMs - accumulated)
+private fun Player.seekToRawOutput(
+    timeline: Timeline,
+    effective: List<TimelineSegment>,
+    rawOutputMs: Long,
+) {
+    if (effective.isEmpty()) return
+    val (rawSeg, sourceT) = timeline.mapOutputToSource(rawOutputMs) ?: run {
+        seekTo(effective.lastIndex, 0L)
+        return
+    }
+    effective.forEachIndexed { idx, eff ->
+        if (eff.sourceUri == rawSeg.sourceUri && sourceT in eff.sourceStartMs..eff.sourceEndMs) {
+            seekTo(idx, sourceT - eff.sourceStartMs)
             return
         }
-        accumulated += d
     }
-    // 범위 밖이면 끝으로
-    seekTo(timeline.segments.lastIndex.coerceAtLeast(0), 0L)
+    // cut 구간이면 같은 sourceUri 의 다음 effective 시작으로 스냅
+    val nextIdx = effective.indexOfFirst { eff ->
+        eff.sourceUri == rawSeg.sourceUri && eff.sourceStartMs >= sourceT
+    }
+    if (nextIdx >= 0) {
+        seekTo(nextIdx, 0L)
+    } else {
+        seekTo(effective.lastIndex.coerceAtLeast(0), 0L)
+    }
 }
 
 /**
- * 현재 ExoPlayer 위치를 타임라인 output ms 로 변환.
+ * 현재 ExoPlayer 위치(effective) 를 raw output ms 로 역매핑.
  */
-private fun Player.currentOutputMs(timeline: Timeline): Long {
-    val idx = currentMediaItemIndex.coerceIn(0, timeline.segments.lastIndex.coerceAtLeast(0))
-    val before = timeline.segments.take(idx).sumOf { it.durationMs }
-    return before + currentPosition.coerceAtLeast(0L)
+private fun Player.currentRawOutputMs(
+    timeline: Timeline,
+    effective: List<TimelineSegment>,
+): Long {
+    if (effective.isEmpty()) return 0L
+    val idx = currentMediaItemIndex.coerceIn(0, effective.lastIndex)
+    val effSeg = effective[idx]
+    val sourceT = effSeg.sourceStartMs + currentPosition.coerceAtLeast(0L)
+    return timeline.mapSourceToOutput(sourceT) ?: 0L
 }
