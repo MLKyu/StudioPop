@@ -7,15 +7,20 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -73,6 +78,31 @@ fun TimelineView(
             .horizontalScroll(rememberScrollState()),
     ) {
         Box(modifier = Modifier.width(totalWidthDp).fillMaxHeight()) {
+            // [최하층] 플레이헤드 탭/드래그 캡처.
+            // bars·segments 보다 먼저 그려져 아래 레이어가 되므로, 위의 interactive
+            // 요소(bar·segment·handle) 가 이벤트를 먼저 받고 안 쓰면 여기로 fall-through.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(timeline.outputDurationMs, pxPerMs) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            val initMs = (down.position.x / pxPerMs).toLong()
+                                .coerceIn(0L, timeline.outputDurationMs)
+                            onPlayheadDrag(initMs)
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val c = event.changes.firstOrNull() ?: break
+                                if (!c.pressed) break
+                                val ms = (c.position.x / pxPerMs).toLong()
+                                    .coerceIn(0L, timeline.outputDurationMs)
+                                onPlayheadDrag(ms)
+                                c.consume()
+                            }
+                        }
+                    }
+            )
+
             // 1) 세그먼트 + 썸네일 레이어
             Row(modifier = Modifier.fillMaxHeight()) {
                 timeline.segments.forEachIndexed { idx, seg ->
@@ -136,42 +166,38 @@ fun TimelineView(
                 }
             }
 
-            // 3) 플레이헤드 + 드래그 캐치 레이어
+            // [최상단 — visual] 플레이헤드 핑크 라인. pointerInput 없어 이벤트 통과.
+            Canvas(modifier = Modifier.fillMaxHeight().width(totalWidthDp)) {
+                val x = playheadOutputMs * pxPerMs
+                drawLine(
+                    color = Color(0xFFFF4081),
+                    start = Offset(x, with(density) { DONGLE_SIZE_DP.dp.toPx() }),
+                    end = Offset(x, size.height),
+                    strokeWidth = with(density) { 2.dp.toPx() },
+                )
+            }
+
+            // [최상단 — interactive] 드래그 가능한 플레이헤드 dongle.
+            // 상단 DONGLE_SIZE_DP × DONGLE_SIZE_DP 영역이 핸들.
+            val playheadXDp = with(density) { (playheadOutputMs * pxPerMs).toDp() }
             Box(
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .width(totalWidthDp)
-                    .pointerInput(timeline.outputDurationMs) {
-                        detectTapGestures(
-                            onTap = { offset ->
-                                val ms = (offset.x / pxPerMs).toLong()
-                                    .coerceIn(0L, timeline.outputDurationMs)
-                                onPlayheadDrag(ms)
-                            },
-                            onPress = { offset ->
-                                val ms = (offset.x / pxPerMs).toLong()
-                                    .coerceIn(0L, timeline.outputDurationMs)
-                                onPlayheadDrag(ms)
-                            },
-                        )
+                    .offset(x = playheadXDp - (DONGLE_SIZE_DP / 2).dp)
+                    .size(DONGLE_SIZE_DP.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFF4081))
+                    .pointerInput(timeline.outputDurationMs, pxPerMs) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            // drag delta 를 ms 로 환산해 현재 playhead 에 누적.
+                            // 정확도 위해 부동소수 변환 후 최종 toLong().
+                            val deltaMs = (drag.x / pxPerMs).toLong()
+                            val newMs = (playheadOutputMs + deltaMs)
+                                .coerceIn(0L, timeline.outputDurationMs)
+                            onPlayheadDrag(newMs)
+                        }
                     }
-            ) {
-                Canvas(modifier = Modifier.fillMaxHeight().width(totalWidthDp)) {
-                    val x = playheadOutputMs * pxPerMs
-                    drawLine(
-                        color = Color(0xFFFF4081),
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = with(density) { 2.dp.toPx() },
-                    )
-                    // 플레이헤드 헤드 (삼각형 대신 작은 사각형)
-                    drawRect(
-                        color = Color(0xFFFF4081),
-                        topLeft = Offset(x - with(density) { 6.dp.toPx() }, 0f),
-                        size = Size(with(density) { 12.dp.toPx() }, with(density) { 10.dp.toPx() }),
-                    )
-                }
-            }
+            )
         }
     }
 }
@@ -374,5 +400,6 @@ private const val TIMELINE_HEIGHT_DP = 120
 private const val DIVIDER_HIT_WIDTH_DP = 14
 private const val BAR_HEIGHT_DP = 22
 private const val HANDLE_WIDTH_DP = 10
+private const val DONGLE_SIZE_DP = 18            // 플레이헤드 dongle 지름
 private const val TEXT_LAYER_BAR_TOP_DP = 4      // 상단 라인
 private const val CAPTION_BAR_TOP_DP = 30        // 하단 라인 (TextLayer 바로 아래)
