@@ -59,6 +59,7 @@ import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.ui.editor.components.CaptionEditorSheet
 import com.mingeek.studiopop.ui.editor.components.PreviewCaptionOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewPlayer
+import com.mingeek.studiopop.ui.editor.components.PreviewTransitionOverlay
 import com.mingeek.studiopop.ui.editor.components.TimelineView
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -155,6 +156,15 @@ fun EditorScreen(
                         isPlaying = state.isPlaying,
                         modifier = Modifier.fillMaxSize(),
                     )
+                    // 전환 켜져 있으면 경계 근처에서 fade-to-black 오버레이 (export 와 동일 공식).
+                    if (state.timeline.transitions.enabled) {
+                        PreviewTransitionOverlay(
+                            boundariesMs = state.timeline.transitionBoundariesRawOutputMs(),
+                            currentOutputMs = state.playheadOutputMs,
+                            halfDurationMs = state.timeline.transitions.durationMs / 2,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     // 프리뷰 위에 자막/텍스트 레이어 Compose 오버레이. 세로 드래그로 anchorY 조정.
                     PreviewCaptionOverlay(
                         timeline = state.timeline,

@@ -84,6 +84,33 @@ data class Timeline(
     /** 타임라인 UI 너비·플레이헤드 좌표는 raw 기준. cut 은 visual overlay 로만 표현. */
     val outputDurationMs: Long get() = segments.sumOf { it.durationMs }
 
+    /**
+     * effectiveSegments 사이 경계들을 **raw output ms** 로 반환.
+     * 프리뷰 전환 오버레이가 플레이헤드(raw 좌표) 기준으로 페이드 거리 계산에 사용.
+     */
+    fun transitionBoundariesRawOutputMs(): List<Long> {
+        val effective = effectiveSegments()
+        if (effective.size <= 1) return emptyList()
+        val rawAccBySegId = mutableMapOf<String, Long>()
+        var acc = 0L
+        for (raw in segments) {
+            rawAccBySegId[raw.id] = acc
+            acc += raw.durationMs
+        }
+        val result = mutableListOf<Long>()
+        for (i in 0 until effective.size - 1) {
+            val eff = effective[i]
+            val rawSeg = segments.firstOrNull {
+                it.sourceUri == eff.sourceUri &&
+                eff.sourceStartMs >= it.sourceStartMs &&
+                eff.sourceEndMs <= it.sourceEndMs
+            } ?: continue
+            val rawAcc = rawAccBySegId[rawSeg.id] ?: continue
+            result += rawAcc + (eff.sourceEndMs - rawSeg.sourceStartMs)
+        }
+        return result
+    }
+
     /** 출력 시각 → (세그먼트, 해당 세그먼트 내부 source 시각) 매핑 — raw 기준. */
     fun mapOutputToSource(outputMs: Long): Pair<TimelineSegment, Long>? {
         var accumulated = 0L
@@ -239,7 +266,7 @@ data class Timeline(
  */
 data class TransitionSettings(
     val enabled: Boolean = false,
-    val durationMs: Long = 400L,
+    val durationMs: Long = 800L,
 )
 
 /**
