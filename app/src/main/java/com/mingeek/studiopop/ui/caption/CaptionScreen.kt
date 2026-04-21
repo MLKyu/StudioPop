@@ -40,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mingeek.studiopop.data.caption.Cue
 import com.mingeek.studiopop.data.caption.SpeechToText
 import com.mingeek.studiopop.data.caption.SttEngine
+import com.mingeek.studiopop.data.caption.WhisperCppModelManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,6 +90,14 @@ fun CaptionScreen(
                 selected = state.selectedEngine,
                 onSelect = viewModel::onEngineSelected,
             )
+
+            if (state.selectedEngine == SttEngine.WHISPER_CPP) {
+                WhisperCppModelPicker(
+                    selected = state.whisperCppVariant,
+                    states = state.whisperCppVariantStates,
+                    onSelect = viewModel::onWhisperCppVariantSelected,
+                )
+            }
 
             OutlinedTextField(
                 value = state.language,
@@ -192,6 +201,55 @@ private fun EngineSelector(
                             style = MaterialTheme.typography.bodySmall,
                             color = if (ready) MaterialTheme.colorScheme.onSurfaceVariant
                             else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhisperCppModelPicker(
+    selected: WhisperCppModelManager.Variant,
+    states: Map<WhisperCppModelManager.Variant, WhisperCppModelManager.InstallState>,
+    onSelect: (WhisperCppModelManager.Variant) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("whisper.cpp 모델", style = MaterialTheme.typography.titleSmall)
+            WhisperCppModelManager.Variant.entries.forEach { v ->
+                val installState = states[v] ?: WhisperCppModelManager.InstallState.NOT_INSTALLED
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = v == selected,
+                            role = Role.RadioButton,
+                            onClick = { onSelect(v) },
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = v == selected, onClick = null)
+                    Column(modifier = Modifier.padding(start = 8.dp).weight(1f)) {
+                        Text(
+                            v.displayName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (v == selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        val statusText = when (installState) {
+                            WhisperCppModelManager.InstallState.READY -> "✓ 다운로드 완료"
+                            WhisperCppModelManager.InstallState.DOWNLOADING -> "↓ 다운로드 중"
+                            WhisperCppModelManager.InstallState.FAILED -> "✕ 다운로드 실패"
+                            WhisperCppModelManager.InstallState.NOT_INSTALLED -> "선택 후 자막 생성 시 자동 다운로드"
+                        }
+                        Text(
+                            statusText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (installState == WhisperCppModelManager.InstallState.READY)
+                                MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }

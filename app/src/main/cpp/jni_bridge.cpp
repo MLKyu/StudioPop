@@ -12,6 +12,7 @@
 #include <android/log.h>
 #include <whisper.h>
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <sstream>
@@ -20,7 +21,24 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+// 진행률 atomic — Kotlin 측에서 nativeProgress() 로 폴링.
+// 0..100 범위. 새 transcribe 시작 시 0 으로 리셋, 완료 시 100.
+static std::atomic<int> g_progress{0};
+
+static void on_whisper_progress(struct whisper_context * /*ctx*/,
+                                struct whisper_state * /*state*/,
+                                int progress,
+                                void * /*user_data*/) {
+    g_progress.store(progress);
+}
+
 extern "C" {
+
+JNIEXPORT jint JNICALL
+Java_com_mingeek_studiopop_data_caption_WhisperCppEngine_nativeProgress(
+        JNIEnv * /*env*/, jobject /*this*/) {
+    return g_progress.load();
+}
 
 JNIEXPORT jlong JNICALL
 Java_com_mingeek_studiopop_data_caption_WhisperCppEngine_nativeInit(
@@ -88,6 +106,11 @@ Java_com_mingeek_studiopop_data_caption_WhisperCppEngine_nativeTranscribe(
     wparams.token_timestamps = false;
     wparams.n_threads        = 4;
 
+    // 진행률 콜백 등록 (Kotlin 은 nativeProgress() 로 폴링)
+    g_progress.store(0);
+    wparams.progress_callback           = on_whisper_progress;
+    wparams.progress_callback_user_data = nullptr;
+
     const char *lang = nullptr;
     if (language != nullptr) {
         lang = env->GetStringUTFChars(language, nullptr);
@@ -109,6 +132,7 @@ Java_com_mingeek_studiopop_data_caption_WhisperCppEngine_nativeTranscribe(
         std::string err = "{\"error\":\"whisper_full rc=" + std::to_string(rc) + "\"}";
         return env->NewStringUTF(err.c_str());
     }
+    g_progress.store(100);
 
     const int segCount = whisper_full_n_segments(ctx);
     std::ostringstream json;

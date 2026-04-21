@@ -8,12 +8,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.mingeek.studiopop.AppContainer
 import com.mingeek.studiopop.StudioPopApp
 import com.mingeek.studiopop.data.caption.Cue
 import com.mingeek.studiopop.data.caption.SpeechToText
 import com.mingeek.studiopop.data.caption.Srt
 import com.mingeek.studiopop.data.caption.SttEngine
 import com.mingeek.studiopop.data.caption.SttRegistry
+import com.mingeek.studiopop.data.caption.WhisperCppModelManager
 import com.mingeek.studiopop.data.project.AssetType
 import com.mingeek.studiopop.data.project.ProjectRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +42,10 @@ data class CaptionUiState(
     val language: String = "ko",
     val selectedEngine: SttEngine = SttEngine.WHISPER_API,
     val engineOptions: List<EngineOption> = emptyList(),
+    /** whisper.cpp 선택 시 사용할 모델 variant. 다른 엔진엔 영향 없음. */
+    val whisperCppVariant: WhisperCppModelManager.Variant = WhisperCppModelManager.Variant.BASE_Q5,
+    /** Variant → 설치 상태. 다운로드 진행 중인지 등 표시용. */
+    val whisperCppVariantStates: Map<WhisperCppModelManager.Variant, WhisperCppModelManager.InstallState> = emptyMap(),
     val phase: CaptionPhase = CaptionPhase.Idle,
     val cues: List<Cue> = emptyList(),
     val savedFilePath: String? = null,
@@ -47,11 +53,15 @@ data class CaptionUiState(
 
 class CaptionViewModel(
     application: Application,
+    private val container: AppContainer,
     private val sttRegistry: SttRegistry,
     private val projectRepository: ProjectRepository,
+    private val whisperCppModelManager: WhisperCppModelManager,
 ) : AndroidViewModel(application) {
 
-    private val _uiState = MutableStateFlow(CaptionUiState())
+    private val _uiState = MutableStateFlow(
+        CaptionUiState(whisperCppVariant = container.whisperCppVariant)
+    )
     val uiState: StateFlow<CaptionUiState> = _uiState.asStateFlow()
 
     private var projectId: Long? = null
@@ -62,7 +72,6 @@ class CaptionViewModel(
             val opts = sttRegistry.all().map { e ->
                 EngineOption(e.id, e.isAvailable())
             }
-            // 첫 사용 가능 엔진을 기본으로
             val firstReady = opts.firstOrNull { it.availability is SpeechToText.Availability.Ready }
                 ?.engine
                 ?: opts.firstOrNull()?.engine
@@ -71,6 +80,25 @@ class CaptionViewModel(
                 it.copy(engineOptions = opts, selectedEngine = firstReady)
             }
         }
+        // whisper.cpp variant 의 설치 상태를 실시간으로 UI 에 반영
+        viewModelScope.launch {
+            whisperCppModelManager.states.collect { states ->
+                _uiState.update { it.copy(whisperCppVariantStates = states) }
+                // 현재 선택된 variant 가 다운로드 완료되면 엔진 가용성 재평가
+                refreshEngineAvailabilities()
+            }
+        }
+    }
+
+    private suspend fun refreshEngineAvailabilities() {
+        val opts = sttRegistry.all().map { e -> EngineOption(e.id, e.isAvailable()) }
+        _uiState.update { it.copy(engineOptions = opts) }
+    }
+
+    fun onWhisperCppVariantSelected(variant: WhisperCppModelManager.Variant) {
+        container.whisperCppVariant = variant
+        _uiState.update { it.copy(whisperCppVariant = variant) }
+        viewModelScope.launch { refreshEngineAvailabilities() }
     }
 
     fun bindProject(id: Long?) {
@@ -186,8 +214,10 @@ class CaptionViewModel(
                 val container = app.container
                 CaptionViewModel(
                     application = app,
+                    container = container,
                     sttRegistry = container.sttRegistry,
                     projectRepository = container.projectRepository,
+                    whisperCppModelManager = container.whisperCppModelManager,
                 )
             }
         }
