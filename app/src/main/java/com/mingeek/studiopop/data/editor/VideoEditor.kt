@@ -201,12 +201,13 @@ class VideoEditor(
             }
         }
 
-        // 전환
-        if (timeline.transitions.enabled && timeline.segments.size > 1) {
+        // 전환: 실제로 concat 되는 effective 세그먼트 경계에 페이드 적용
+        val effectiveSegs = timeline.effectiveSegments()
+        if (timeline.transitions.enabled && effectiveSegs.size > 1) {
             val boundaries = mutableListOf<Long>()
             var acc = 0L
-            for (i in 0 until timeline.segments.size - 1) {
-                acc += timeline.segments[i].durationMs
+            for (i in 0 until effectiveSegs.size - 1) {
+                acc += effectiveSegs[i].durationMs
                 boundaries += acc
             }
             overlays += FadeAtBoundariesOverlay(

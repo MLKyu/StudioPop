@@ -56,6 +56,8 @@ data class EditorUiState(
     val canExport: Boolean
         get() = hasVideo && phase !is ExportPhase.Running
     val canDelete: Boolean get() = timeline.segments.size > 1
+    /** 전환은 세그먼트 경계가 존재할 때만 의미 — 여러 영상을 합쳤거나 cut 으로 경계가 생겼을 때. */
+    val canUseTransitions: Boolean get() = timeline.effectiveSegments().size > 1
 }
 
 @UnstableApi

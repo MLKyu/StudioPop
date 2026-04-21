@@ -213,6 +213,7 @@ fun EditorScreen(
                 // Tier 2 옵션들: 전환 / BGM / 영상 교체 / SRT
                 OptionsRow(
                     transitionsOn = state.timeline.transitions.enabled,
+                    canUseTransitions = state.canUseTransitions,
                     bgmLabel = state.timeline.audioTrack?.uri?.toString()
                         ?.substringAfterLast('/')
                         ?: "없음",
@@ -329,6 +330,7 @@ private fun ToolbarRow(
 @Composable
 private fun OptionsRow(
     transitionsOn: Boolean,
+    canUseTransitions: Boolean,
     bgmLabel: String,
     textLayerCount: Int,
     onToggleTransitions: () -> Unit,
@@ -346,6 +348,7 @@ private fun OptionsRow(
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(
                 selected = transitionsOn,
+                enabled = canUseTransitions,
                 onClick = onToggleTransitions,
                 label = { Text("전환") },
                 leadingIcon = { Icon(Icons.Outlined.Animation, contentDescription = null) },
