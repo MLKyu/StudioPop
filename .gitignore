@@ -6,21 +6,10 @@
 /.externalNativeBuild/
 /.cxx/
 
-# Android Studio / IntelliJ
+# Android Studio / IntelliJ — ignore whole .idea except committed .gitignore
 *.iml
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-/.idea/deploymentTargetSelector.xml
-/.idea/deploymentTargetDropDown.xml
-/.idea/appInsightsSettings.xml
-/.idea/compiler.xml
-/.idea/gradle.xml
-/.idea/misc.xml
-/.idea/kotlinc.xml
+/.idea/**
+!/.idea/.gitignore
 
 # Secrets / local config — 절대 커밋하지 말 것
 local.properties
