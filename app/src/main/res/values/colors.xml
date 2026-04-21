@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Brand: 네온 그린 + 다크 (ShuPick Crane 채널 톤 매칭) -->
+    <color name="studiopop_green">#A6FF00</color>
+    <color name="studiopop_green_dim">#7FCC00</color>
+    <color name="studiopop_dark">#0D1117</color>
+    <color name="studiopop_dark_elev">#161B22</color>
+
+    <!-- Defaults retained for legacy refs -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
