@@ -16,6 +16,7 @@ import com.mingeek.studiopop.data.caption.VoskTranscriber
 import com.mingeek.studiopop.data.caption.WhisperApiEngine
 import com.mingeek.studiopop.data.caption.WhisperClient
 import com.mingeek.studiopop.data.caption.WhisperCppEngine
+import com.mingeek.studiopop.data.caption.WhisperCppModelManager
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AppDatabase
@@ -108,7 +109,13 @@ class AppContainer(context: Context) {
         VoskTranscriber(pcmDecoder, voskModelManager, moshi)
     }
 
-    private val whisperCppEngine: WhisperCppEngine by lazy { WhisperCppEngine() }
+    val whisperCppModelManager: WhisperCppModelManager by lazy {
+        WhisperCppModelManager(appContext, okHttpClient)
+    }
+
+    private val whisperCppEngine: WhisperCppEngine by lazy {
+        WhisperCppEngine(pcmDecoder, whisperCppModelManager, moshi)
+    }
 
     val sttRegistry: SttRegistry by lazy {
         SttRegistry(

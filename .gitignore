@@ -3,8 +3,10 @@
 /build/
 /app/build/
 /captures/
-/.externalNativeBuild/
-/.cxx/
+
+# NDK / CMake build cache (어느 위치에서든 무시)
+**/.externalNativeBuild/
+**/.cxx/
 
 # Android Studio / IntelliJ — ignore whole .idea except committed .gitignore
 *.iml

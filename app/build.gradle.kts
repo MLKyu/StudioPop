@@ -21,6 +21,8 @@ android {
         }
     }
 
+    ndkVersion = "27.0.12077973"
+
     defaultConfig {
         applicationId = "com.mingeek.studiopop"
         minSdk = 24
@@ -32,6 +34,26 @@ android {
 
         buildConfigField("String", "OPENAI_API_KEY", "\"$openAiApiKey\"")
         buildConfigField("String", "ANTHROPIC_API_KEY", "\"$anthropicApiKey\"")
+
+        ndk {
+            // 64-bit only — Google Play 가 권장. 32-bit 는 emulator/구형용
+            abiFilters += setOf("arm64-v8a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                )
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
