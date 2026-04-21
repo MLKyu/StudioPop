@@ -1,4 +1,15 @@
 <resources>
-
+    <!-- 메인 앱 테마: Compose Material3 위에 얹는 베이스 (포스트 스플래시) -->
     <style name="Theme.StudioPop" parent="Theme.MaterialComponents.Light" />
+
+    <!--
+      Splash 테마.
+      Theme.SplashScreen 을 부모로 사용 → Android 12+ 는 네이티브,
+      그 이하(minSdk 24~30) 는 androidx.core:core-splashscreen 폴리필.
+    -->
+    <style name="Theme.StudioPop.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/studiopop_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.StudioPop</item>
+    </style>
 </resources>
