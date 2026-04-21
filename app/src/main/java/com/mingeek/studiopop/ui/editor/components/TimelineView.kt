@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -178,26 +180,38 @@ fun TimelineView(
             }
 
             // [최상단 — interactive] 드래그 가능한 플레이헤드 dongle.
-            // 상단 DONGLE_SIZE_DP × DONGLE_SIZE_DP 영역이 핸들.
+            //
+            // 주의: pointerInput 의 람다는 key 가 바뀔 때만 새로 만들어지므로, 안쪽
+            // playheadOutputMs 참조가 stale 하면 델타가 항상 초기값 기준으로
+            // 계산돼 첫 이벤트 이후 고정된다. rememberUpdatedState 로 최신값 참조.
+            val latestPlayhead by rememberUpdatedState(playheadOutputMs)
+            val latestTotal by rememberUpdatedState(timeline.outputDurationMs)
+            val latestPxPerMs by rememberUpdatedState(pxPerMs)
             val playheadXDp = with(density) { (playheadOutputMs * pxPerMs).toDp() }
+
+            // 터치 타깃은 40dp (WCAG 최소), 내부에 18dp 원형 dongle 을 그려 시각 유지.
             Box(
                 modifier = Modifier
-                    .offset(x = playheadXDp - (DONGLE_SIZE_DP / 2).dp)
-                    .size(DONGLE_SIZE_DP.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFFF4081))
-                    .pointerInput(timeline.outputDurationMs, pxPerMs) {
+                    .offset(x = playheadXDp - (DONGLE_TOUCH_DP / 2).dp)
+                    .size(DONGLE_TOUCH_DP.dp)
+                    .pointerInput(Unit) {
                         detectDragGestures { change, drag ->
                             change.consume()
-                            // drag delta 를 ms 로 환산해 현재 playhead 에 누적.
-                            // 정확도 위해 부동소수 변환 후 최종 toLong().
-                            val deltaMs = (drag.x / pxPerMs).toLong()
-                            val newMs = (playheadOutputMs + deltaMs)
-                                .coerceIn(0L, timeline.outputDurationMs)
+                            val deltaMs = (drag.x / latestPxPerMs).toLong()
+                            val newMs = (latestPlayhead + deltaMs)
+                                .coerceIn(0L, latestTotal)
                             onPlayheadDrag(newMs)
                         }
-                    }
-            )
+                    },
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(DONGLE_SIZE_DP.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF4081))
+                )
+            }
         }
     }
 }
@@ -400,6 +414,7 @@ private const val TIMELINE_HEIGHT_DP = 120
 private const val DIVIDER_HIT_WIDTH_DP = 14
 private const val BAR_HEIGHT_DP = 22
 private const val HANDLE_WIDTH_DP = 10
-private const val DONGLE_SIZE_DP = 18            // 플레이헤드 dongle 지름
+private const val DONGLE_SIZE_DP = 18            // 플레이헤드 dongle 시각 지름
+private const val DONGLE_TOUCH_DP = 40           // 플레이헤드 dongle 터치 타깃 (WCAG min)
 private const val TEXT_LAYER_BAR_TOP_DP = 4      // 상단 라인
 private const val CAPTION_BAR_TOP_DP = 30        // 하단 라인 (TextLayer 바로 아래)
