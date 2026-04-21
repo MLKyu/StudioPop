@@ -15,6 +15,7 @@ import com.mingeek.studiopop.StudioPopApp
 import com.mingeek.studiopop.data.caption.Srt
 import com.mingeek.studiopop.data.editor.AudioTrack
 import com.mingeek.studiopop.data.editor.CaptionStyle
+import com.mingeek.studiopop.data.editor.CutRange
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.TextLayer
 import com.mingeek.studiopop.data.editor.Timeline
@@ -180,12 +181,6 @@ class EditorViewModel(
     fun consumeSeekRequest() = _uiState.update { it.copy(seekRequest = null) }
 
     // --- 세그먼트 조작 ---
-    fun splitAtPlayhead() {
-        _uiState.update {
-            it.copy(timeline = it.timeline.splitAtOutputMs(it.playheadOutputMs))
-        }
-    }
-
     fun onDividerDrag(prevSegId: String, nextSegId: String, sourceDeltaMs: Long) {
         _uiState.update {
             val newTimeline = it.timeline.moveBoundary(prevSegId, nextSegId, sourceDeltaMs)
@@ -195,8 +190,48 @@ class EditorViewModel(
         }
     }
 
+    // --- 범위 삭제 (CutRange) ---
     /**
-     * 현재 플레이헤드가 위치한 세그먼트를 삭제. CapCut 의 "현재 구간 삭제" 와 동일.
+     * 현재 플레이헤드 위치에 기본 duration 의 CutRange 생성.
+     */
+    fun addCutRangeAtPlayhead() {
+        val state = _uiState.value
+        val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs) ?: return
+        val srcEnd = (sourceT + DEFAULT_CUT_DURATION_MS).coerceAtMost(seg.sourceEndMs)
+        val cut = CutRange(
+            sourceUri = seg.sourceUri,
+            sourceStartMs = sourceT,
+            sourceEndMs = srcEnd,
+        )
+        _uiState.update { it.copy(timeline = it.timeline.addCutRange(cut)) }
+    }
+
+    fun onCutRangeResize(id: String, startDeltaMs: Long, endDeltaMs: Long) {
+        _uiState.update { state ->
+            val cut = state.timeline.cutRanges.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (cut.sourceStartMs + startDeltaMs).coerceAtLeast(0L)
+            val newEnd = (cut.sourceEndMs + endDeltaMs).coerceAtLeast(newStart + MIN_OVERLAY_DURATION_MS)
+            state.copy(timeline = state.timeline.updateCutRange(cut.copy(sourceStartMs = newStart, sourceEndMs = newEnd)))
+        }
+    }
+
+    fun onCutRangeTranslate(id: String, deltaMs: Long) {
+        _uiState.update { state ->
+            val cut = state.timeline.cutRanges.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (cut.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val duration = cut.sourceEndMs - cut.sourceStartMs
+            state.copy(timeline = state.timeline.updateCutRange(
+                cut.copy(sourceStartMs = newStart, sourceEndMs = newStart + duration)
+            ))
+        }
+    }
+
+    fun deleteCutRange(id: String) {
+        _uiState.update { it.copy(timeline = it.timeline.deleteCutRange(id)) }
+    }
+
+    /**
+     * 현재 플레이헤드가 위치한 세그먼트를 삭제. 여러 영상 추가한 상태에서 특정 영상 통째로 빼기.
      */
     fun deleteCurrentSegment() {
         val state = _uiState.value
@@ -480,6 +515,7 @@ class EditorViewModel(
 
     companion object {
         private const val DEFAULT_NEW_DURATION_MS = 2_000L
+        private const val DEFAULT_CUT_DURATION_MS = 2_000L
         private const val MIN_OVERLAY_DURATION_MS = 200L
 
         val Factory: ViewModelProvider.Factory = viewModelFactory {

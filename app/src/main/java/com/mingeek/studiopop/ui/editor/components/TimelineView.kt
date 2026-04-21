@@ -71,6 +71,9 @@ fun TimelineView(
     onTextLayerResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
     onCaptionTranslate: (id: String, deltaMs: Long) -> Unit,
     onTextLayerTranslate: (id: String, deltaMs: Long) -> Unit,
+    onCutRangeTap: (String) -> Unit,
+    onCutRangeResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
+    onCutRangeTranslate: (id: String, deltaMs: Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -149,6 +152,26 @@ fun TimelineView(
                         onTap = { onCaptionTap(cap.id) },
                         onResize = { s, e -> onCaptionResize(cap.id, s, e) },
                         onTranslate = { d -> onCaptionTranslate(cap.id, d) },
+                    )
+                }
+            }
+
+            // 4) 삭제 범위 (빨간 라인) — 탭하면 제거(복원), 핸들·롱프레스로 조정
+            Box(modifier = Modifier.fillMaxHeight()) {
+                timeline.cutRanges.forEach { cut ->
+                    OverlayBar(
+                        id = cut.id,
+                        text = "삭제",
+                        sourceStartMs = cut.sourceStartMs,
+                        sourceEndMs = cut.sourceEndMs,
+                        timeline = timeline,
+                        pxPerMs = pxPerMs,
+                        topDp = CUT_BAR_TOP_DP.dp,
+                        barColor = Color(0xFFE53935).copy(alpha = 0.85f),
+                        isSelected = false,
+                        onTap = { onCutRangeTap(cut.id) },
+                        onResize = { s, e -> onCutRangeResize(cut.id, s, e) },
+                        onTranslate = { d -> onCutRangeTranslate(cut.id, d) },
                     )
                 }
             }
@@ -422,4 +445,5 @@ private const val HANDLE_WIDTH_DP = 10
 private const val DONGLE_SIZE_DP = 18            // 플레이헤드 dongle 시각 지름
 private const val DONGLE_TOUCH_DP = 40           // 플레이헤드 dongle 터치 타깃 (WCAG min)
 private const val TEXT_LAYER_BAR_TOP_DP = 4      // 상단 라인
-private const val CAPTION_BAR_TOP_DP = 30        // 하단 라인 (TextLayer 바로 아래)
+private const val CAPTION_BAR_TOP_DP = 30        // 중간 라인 (TextLayer 아래)
+private const val CUT_BAR_TOP_DP = 56            // 하단 라인 (Caption 아래) — 삭제 범위

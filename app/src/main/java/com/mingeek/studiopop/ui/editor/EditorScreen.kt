@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -173,7 +174,7 @@ fun EditorScreen(
                     totalOutputMs = state.timeline.outputDurationMs,
                     canDelete = state.canDelete,
                     onTogglePlay = viewModel::togglePlay,
-                    onSplit = viewModel::splitAtPlayhead,
+                    onAddCutRange = viewModel::addCutRangeAtPlayhead,
                     onDelete = viewModel::deleteCurrentSegment,
                     onAddCaption = viewModel::openCaptionEditorForNew,
                     onAddTextLayer = viewModel::openTextLayerEditorForNew,
@@ -202,6 +203,9 @@ fun EditorScreen(
                         onTextLayerResize = viewModel::onTextLayerResize,
                         onCaptionTranslate = viewModel::onCaptionTranslate,
                         onTextLayerTranslate = viewModel::onTextLayerTranslate,
+                        onCutRangeTap = viewModel::deleteCutRange,
+                        onCutRangeResize = viewModel::onCutRangeResize,
+                        onCutRangeTranslate = viewModel::onCutRangeTranslate,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -274,7 +278,7 @@ private fun ToolbarRow(
     totalOutputMs: Long,
     canDelete: Boolean,
     onTogglePlay: () -> Unit,
-    onSplit: () -> Unit,
+    onAddCutRange: () -> Unit,
     onDelete: () -> Unit,
     onAddCaption: () -> Unit,
     onAddTextLayer: () -> Unit,
@@ -299,13 +303,13 @@ private fun ToolbarRow(
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(start = 4.dp, end = 12.dp),
         )
-        FilledTonalButton(onClick = onSplit) {
+        FilledTonalButton(onClick = onAddCutRange) {
             Icon(Icons.Filled.ContentCut, contentDescription = null)
-            Text(" 분할", modifier = Modifier.padding(start = 4.dp))
+            Text(" 범위 삭제", modifier = Modifier.padding(start = 4.dp))
         }
         FilledTonalButton(onClick = onDelete, enabled = canDelete) {
-            Icon(Icons.Filled.Delete, contentDescription = null)
-            Text(" 삭제", modifier = Modifier.padding(start = 4.dp))
+            Icon(Icons.Filled.RemoveCircle, contentDescription = null)
+            Text(" 영상 제거", modifier = Modifier.padding(start = 4.dp))
         }
         FilledTonalButton(onClick = onAddCaption) {
             Icon(Icons.Filled.Subtitles, contentDescription = null)

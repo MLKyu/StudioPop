@@ -37,7 +37,7 @@ fun PreviewPlayer(
     val context = LocalContext.current
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
 
-    // 타임라인 세그먼트가 바뀌면 MediaItem 리스트를 재설정
+    // 프리뷰는 raw segments 재생 (cut 은 export 에서만 적용됨 — 시각 힌트만 타임라인에 노출)
     LaunchedEffect(timeline.segments) {
         val items = timeline.segments.map { it.toMediaItem() }
         exoPlayer.setMediaItems(items, /* resetPosition = */ false)
