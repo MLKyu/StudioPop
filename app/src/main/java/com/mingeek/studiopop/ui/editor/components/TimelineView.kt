@@ -61,6 +61,8 @@ fun TimelineView(
     playheadOutputMs: Long,
     selectedCaptionId: String?,
     pxPerMs: Float = DEFAULT_PX_PER_MS,
+    /** 타임라인 높이. null 이면 orientation 에 따라 자동 (세로 140, 가로 200). */
+    heightDp: Dp? = null,
     onCaptionTap: (String) -> Unit,
     onTextLayerTap: (String) -> Unit,
     onPlayheadDrag: (Long) -> Unit,
@@ -72,11 +74,15 @@ fun TimelineView(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val resolvedHeight = heightDp ?: if (
+        config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    ) TIMELINE_HEIGHT_LANDSCAPE_DP.dp else TIMELINE_HEIGHT_PORTRAIT_DP.dp
     val totalWidthDp: Dp = with(density) { (timeline.outputDurationMs * pxPerMs).toDp() }
 
     Box(
         modifier = modifier
-            .height(TIMELINE_HEIGHT_DP.dp)
+            .height(resolvedHeight)
             .horizontalScroll(rememberScrollState()),
     ) {
         Box(modifier = Modifier.width(totalWidthDp).fillMaxHeight()) {
@@ -406,7 +412,10 @@ private fun ResizeHandle(
 }
 
 private const val DEFAULT_PX_PER_MS = 0.15f // 1초 = 150px
-private const val TIMELINE_HEIGHT_DP = 120
+/** 세로 모드 기본 높이 (이전 120 에서 썸네일 인식성 위해 확대) */
+private const val TIMELINE_HEIGHT_PORTRAIT_DP = 140
+/** 가로 모드 기본 높이 (vertical 여유 공간 활용) */
+private const val TIMELINE_HEIGHT_LANDSCAPE_DP = 200
 private const val DIVIDER_HIT_WIDTH_DP = 14
 private const val BAR_HEIGHT_DP = 22
 private const val HANDLE_WIDTH_DP = 10
