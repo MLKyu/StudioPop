@@ -1,13 +1,17 @@
 package com.mingeek.studiopop.data.editor
 
+import android.net.Uri
 import java.util.UUID
 
 /**
- * 타임라인의 한 조각. 원본 영상의 [sourceStartMs, sourceEndMs] 구간.
+ * 타임라인의 한 조각. **특정 sourceUri** 영상의 [sourceStartMs, sourceEndMs] 구간.
  * 출력 영상은 [TimelineSegment] 들을 순서대로 이어붙인 결과.
+ *
+ * 세그먼트마다 sourceUri 가 다를 수 있어 여러 영상을 하나의 타임라인에 concat 가능.
  */
 data class TimelineSegment(
     val id: String = UUID.randomUUID().toString(),
+    val sourceUri: Uri,
     val sourceStartMs: Long,
     val sourceEndMs: Long,
 ) {
@@ -94,11 +98,27 @@ data class Timeline(
         val newSegs = segments.flatMap { s ->
             if (s.id == seg.id) listOf(
                 s.copy(sourceEndMs = sourceT),
-                TimelineSegment(sourceStartMs = sourceT, sourceEndMs = s.sourceEndMs),
+                TimelineSegment(
+                    sourceUri = s.sourceUri,
+                    sourceStartMs = sourceT,
+                    sourceEndMs = s.sourceEndMs,
+                ),
             ) else listOf(s)
         }
         return copy(segments = newSegs)
     }
+
+    /**
+     * 타임라인 끝에 새 영상을 통째로 추가. 서로 다른 sourceUri 여도 OK.
+     */
+    fun appendVideo(uri: Uri, durationMs: Long): Timeline =
+        copy(
+            segments = segments + TimelineSegment(
+                sourceUri = uri,
+                sourceStartMs = 0L,
+                sourceEndMs = durationMs,
+            )
+        )
 
     fun deleteSegment(id: String): Timeline {
         if (segments.size <= 1) return this // 마지막 1개는 남김
@@ -166,13 +186,20 @@ data class Timeline(
         /** moveBoundary 시 각 세그먼트 보장할 최소 길이 */
         const val MIN_DURATION_MS = 100L
 
-        fun single(sourceDurationMs: Long, captions: List<TimelineCaption> = emptyList()): Timeline =
-            Timeline(
-                segments = listOf(
-                    TimelineSegment(sourceStartMs = 0L, sourceEndMs = sourceDurationMs)
-                ),
-                captions = captions,
-            )
+        fun single(
+            sourceUri: Uri,
+            sourceDurationMs: Long,
+            captions: List<TimelineCaption> = emptyList(),
+        ): Timeline = Timeline(
+            segments = listOf(
+                TimelineSegment(
+                    sourceUri = sourceUri,
+                    sourceStartMs = 0L,
+                    sourceEndMs = sourceDurationMs,
+                )
+            ),
+            captions = captions,
+        )
     }
 }
 

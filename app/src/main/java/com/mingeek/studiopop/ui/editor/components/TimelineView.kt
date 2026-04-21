@@ -1,6 +1,7 @@
 package com.mingeek.studiopop.ui.editor.components
 
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -47,8 +48,8 @@ import com.mingeek.studiopop.data.editor.TimelineSegment
 @Composable
 fun TimelineView(
     timeline: Timeline,
-    sourceDurationMs: Long,
-    frameStrip: List<Bitmap>,
+    /** 영상 Uri → (총 길이 ms, 프레임 스트립) 맵. 각 세그먼트가 자기 sourceUri 로 조회. */
+    frameStrips: Map<Uri, Pair<Long, List<Bitmap>>>,
     playheadOutputMs: Long,
     selectedSegmentId: String?,
     selectedCaptionId: String?,
@@ -71,10 +72,12 @@ fun TimelineView(
             // 1) 세그먼트 + 썸네일 레이어
             Row(modifier = Modifier.fillMaxHeight()) {
                 timeline.segments.forEachIndexed { idx, seg ->
+                    val (totalSourceMs, strip) = frameStrips[seg.sourceUri]
+                        ?: (seg.sourceEndMs to emptyList())
                     SegmentBlock(
                         segment = seg,
-                        totalSourceMs = sourceDurationMs,
-                        frameStrip = frameStrip,
+                        totalSourceMs = totalSourceMs,
+                        frameStrip = strip,
                         isSelected = seg.id == selectedSegmentId,
                         pxPerMs = pxPerMs,
                         onTap = { onSegmentTap(seg.id) },

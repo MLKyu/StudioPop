@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,7 +22,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -48,9 +48,9 @@ fun ShortsScreen(
     val state by viewModel.uiState.collectAsState()
     LaunchedEffect(projectId) { viewModel.bindProject(projectId) }
 
-    val pickVideoLauncher = rememberLauncherForActivityResult(
+    val pickClipLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri -> viewModel.onVideoSelected(uri) }
+    ) { uri -> viewModel.addClip(uri) }
 
     val pickSrtLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -78,41 +78,68 @@ fun ShortsScreen(
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("원본 영상", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = state.videoUri?.toString()
-                            ?: "영상이 선택되지 않았습니다",
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2,
-                    )
+                    Text("영상 클립 (${state.clips.size}개)", style = MaterialTheme.typography.titleSmall)
+                    if (state.clips.isEmpty()) {
+                        Text(
+                            "아래 '영상 추가' 로 쇼츠에 이어붙일 영상을 차례로 선택하세요.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        state.clips.forEachIndexed { idx, clip ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "${idx + 1}. ${clip.uri.toString().substringAfterLast('/')}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        formatMs(clip.durationMs),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = { viewModel.removeClip(idx) }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "삭제")
+                                }
+                            }
+                        }
+                    }
                     OutlinedButton(
                         onClick = {
-                            pickVideoLauncher.launch(
+                            pickClipLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                             )
                         },
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (state.videoUri != null) "영상 변경" else "갤러리에서 선택")
-                    }
+                    ) { Text(if (state.clips.isEmpty()) "+ 영상 추가" else "+ 영상 더 추가") }
                 }
             }
 
-            if (state.durationMs > 0) {
+            if (state.clips.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("구간 (최대 60초)", style = MaterialTheme.typography.titleSmall)
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            "${formatMs(state.trimStartMs)}  →  ${formatMs(state.trimEndMs)}" +
-                                    "  (${formatMs(state.durationSelectedMs)})",
+                            "총 길이: ${formatMs(state.totalDurationMs)}",
+                            style = MaterialTheme.typography.titleSmall,
                         )
-                        RangeSlider(
-                            value = state.trimStartMs.toFloat()..state.trimEndMs.toFloat(),
-                            onValueChange = { range ->
-                                viewModel.onTrimChange(range.start.toLong(), range.endInclusive.toLong())
-                            },
-                            valueRange = 0f..state.durationMs.toFloat(),
-                        )
+                        if (state.willTruncate) {
+                            Text(
+                                "⚠ 60초 초과 — 끝부분은 자동으로 잘려 ${formatMs(ShortsUiState.SHORTS_MAX_MS)} 로 맞춤",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        } else {
+                            Text(
+                                "최종 숏츠 길이: ${formatMs(state.finalDurationMs)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -120,6 +147,11 @@ fun ShortsScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("자막 번인 (선택)", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "SRT 시각은 첫 클립 기준입니다. 두 번째 이상 클립 구간의 자막은 export 되지 않아요.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -197,8 +229,7 @@ private fun PhaseIndicator(phase: ShortsPhase, onDismiss: () -> Unit) {
 private fun formatMs(ms: Long): String {
     if (ms <= 0) return "0:00"
     val totalSec = ms / 1000
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
+    val m = totalSec / 60
     val s = totalSec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return "%d:%02d".format(m, s)
 }

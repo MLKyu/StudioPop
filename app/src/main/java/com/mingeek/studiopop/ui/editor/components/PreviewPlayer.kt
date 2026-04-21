@@ -1,7 +1,6 @@
 package com.mingeek.studiopop.ui.editor.components
 
 import android.content.Context
-import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -24,17 +23,11 @@ import kotlinx.coroutines.delay
 
 /**
  * Timeline 세그먼트를 ExoPlayer MediaItem 리스트로 변환해 자동 concat 재생하는 Compose 프리뷰.
- *
- * @param sourceUri 원본 영상 URI
- * @param timeline 현재 타임라인 (세그먼트 변경 시 플레이어 media items 재구성)
- * @param onPositionChange 재생 중 출력(output) 타임라인 기준 ms 를 주기적으로 알려줌
- * @param seekToOutputMs 외부에서 플레이헤드를 움직였을 때 이 값이 바뀌면 player seek
- * @param isPlaying 외부에서 재생/일시정지 토글 제어
+ * 세그먼트별로 sourceUri 가 달라도 이어서 재생됨.
  */
 @UnstableApi
 @Composable
 fun PreviewPlayer(
-    sourceUri: Uri,
     timeline: Timeline,
     onPositionChange: (Long) -> Unit,
     seekToOutputMs: Long?,
@@ -45,8 +38,8 @@ fun PreviewPlayer(
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
 
     // 타임라인 세그먼트가 바뀌면 MediaItem 리스트를 재설정
-    LaunchedEffect(sourceUri, timeline.segments) {
-        val items = timeline.segments.map { segment -> segment.toMediaItem(sourceUri) }
+    LaunchedEffect(timeline.segments) {
+        val items = timeline.segments.map { it.toMediaItem() }
         exoPlayer.setMediaItems(items, /* resetPosition = */ false)
         exoPlayer.prepare()
     }
@@ -86,9 +79,9 @@ fun PreviewPlayer(
     )
 }
 
-private fun TimelineSegment.toMediaItem(uri: Uri): MediaItem =
+private fun TimelineSegment.toMediaItem(): MediaItem =
     MediaItem.Builder()
-        .setUri(uri)
+        .setUri(sourceUri)
         .setClippingConfiguration(
             MediaItem.ClippingConfiguration.Builder()
                 .setStartPositionMs(sourceStartMs)
