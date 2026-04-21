@@ -96,12 +96,14 @@ class VideoEditor(
 
             val removeOriginalAudio = timeline.audioTrack?.replaceOriginal == true
             val videoItems = effective.map { seg ->
+                val start = seg.sourceStartMs.coerceAtLeast(0L)
+                val end = seg.sourceEndMs.coerceAtLeast(start)
                 val mediaItem = MediaItem.Builder()
                     .setUri(seg.sourceUri)
                     .setClippingConfiguration(
                         MediaItem.ClippingConfiguration.Builder()
-                            .setStartPositionMs(seg.sourceStartMs)
-                            .setEndPositionMs(seg.sourceEndMs)
+                            .setStartPositionMs(start)
+                            .setEndPositionMs(end)
                             .build()
                     )
                     .build()
