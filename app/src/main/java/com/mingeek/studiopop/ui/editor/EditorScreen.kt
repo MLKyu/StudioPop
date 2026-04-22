@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.data.editor.TransitionKind
+import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
 import com.mingeek.studiopop.ui.editor.components.CaptionEditorSheet
 import com.mingeek.studiopop.ui.editor.components.PreviewCaptionOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewPlayer
@@ -123,6 +124,18 @@ fun EditorScreen(
             val addVideoLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.PickVisualMedia()
             ) { uri -> viewModel.addVideoToTimeline(uri) }
+
+            if (state.hasProject &&
+                (state.latestExportVideoPath != null || state.latestSrtPath != null)
+            ) {
+                ProjectQuickLoadCard(
+                    latestExportVideoPath = state.latestExportVideoPath,
+                    latestSrtPath = state.latestSrtPath,
+                    onLoadVideo = { viewModel.loadLatestExportAsInput() },
+                    onLoadSrt = { viewModel.loadLatestSrt() },
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
 
             if (!state.hasVideo) {
                 EmptyVideoPicker(

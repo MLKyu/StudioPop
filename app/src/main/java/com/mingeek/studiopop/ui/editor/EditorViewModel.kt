@@ -52,6 +52,11 @@ data class EditorUiState(
     val editingItem: EditableTextItem? = null,
     val editingKind: EditKind? = null,
     val phase: ExportPhase = ExportPhase.Idle,
+    /** 프로젝트의 최신 EXPORT_VIDEO 파일 경로. 퀵 로드 카드에서 사용. */
+    val latestExportVideoPath: String? = null,
+    /** 프로젝트의 최신 CAPTION_SRT 파일 경로. 퀵 로드 카드에서 사용. */
+    val latestSrtPath: String? = null,
+    val hasProject: Boolean = false,
 ) {
     val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
@@ -77,12 +82,49 @@ class EditorViewModel(
     fun bindProject(id: Long?) {
         if (id == null || id <= 0 || id == projectId) return
         projectId = id
+        _uiState.update { it.copy(hasProject = true) }
         viewModelScope.launch {
             val project = projectRepository.getProject(id) ?: return@launch
             replaceWithVideo(project.sourceVideoUri.toUri())
             val srtAsset = projectRepository.latestAsset(id, AssetType.CAPTION_SRT)
             srtAsset?.let { importSrtFromPath(it.value) }
+            refreshQuickLoad()
+            backfillOldAssetsSilently(id)
         }
+    }
+
+    /**
+     * MediaStore 퍼블리시 도입 이전에 만들어진 기존 asset 을 갤러리/Downloads 에 소급 등록.
+     * SharedPreferences 기반 idempotent — 이미 등록된 것은 스킵. 결과는 silently 무시
+     * (사용자는 갤러리에서 파일이 보이기 시작하는 것으로 인지).
+     */
+    private suspend fun backfillOldAssetsSilently(projectId: Long) {
+        val app = getApplication<Application>() as? StudioPopApp ?: return
+        runCatching { app.container.assetBackfillPublisher.backfill(projectId) }
+    }
+
+    /**
+     * DB 의 최신 EXPORT_VIDEO / CAPTION_SRT asset 경로를 UI state 에 반영.
+     * bindProject + 매 export 성공 후 호출.
+     */
+    private suspend fun refreshQuickLoad() {
+        val pid = projectId ?: return
+        val video = projectRepository.latestAsset(pid, AssetType.EXPORT_VIDEO)?.value
+        val srt = projectRepository.latestAsset(pid, AssetType.CAPTION_SRT)?.value
+        _uiState.update { it.copy(latestExportVideoPath = video, latestSrtPath = srt) }
+    }
+
+    /** DB 의 최신 편집 결과 영상을 타임라인 단일 클립으로 재로딩. "두 번째 편집" 진입점. */
+    fun loadLatestExportAsInput() {
+        val path = _uiState.value.latestExportVideoPath ?: return
+        val uri = java.io.File(path).toUri()
+        viewModelScope.launch { replaceWithVideo(uri) }
+    }
+
+    /** DB 의 최신 SRT 를 현재 타임라인 captions 으로 덮어씀. */
+    fun loadLatestSrt() {
+        val path = _uiState.value.latestSrtPath ?: return
+        importSrtFromPath(path)
     }
 
     /**
@@ -497,6 +539,7 @@ class EditorViewModel(
                             label = "편집본 (${state.timeline.segments.size}컷)",
                         )
                     }
+                    refreshQuickLoad()
                 },
                 onFailure = { e ->
                     _uiState.update {

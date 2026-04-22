@@ -53,6 +53,8 @@ data class ThumbnailUiState(
     /** 현재 편집중인 변형 id. null 이면 그리드만 노출. */
     val selectedVariantId: String? = null,
     val phase: ThumbnailPhase = ThumbnailPhase.Idle,
+    val latestExportVideoPath: String? = null,
+    val hasProject: Boolean = false,
 )
 
 class ThumbnailViewModel(
@@ -82,10 +84,30 @@ class ThumbnailViewModel(
     fun bindProject(id: Long?) {
         if (id == null || id <= 0 || id == projectId) return
         projectId = id
+        _uiState.update { it.copy(hasProject = true) }
         viewModelScope.launch {
             val project = projectRepository.getProject(id) ?: return@launch
             onVideoSelected(project.sourceVideoUri.toUri())
+            refreshQuickLoad()
+            backfillOldAssetsSilently(id)
         }
+    }
+
+    private suspend fun backfillOldAssetsSilently(projectId: Long) {
+        val app = getApplication<Application>() as? StudioPopApp ?: return
+        runCatching { app.container.assetBackfillPublisher.backfill(projectId) }
+    }
+
+    private suspend fun refreshQuickLoad() {
+        val pid = projectId ?: return
+        val video = projectRepository.latestAsset(pid, AssetType.EXPORT_VIDEO)?.value
+        _uiState.update { it.copy(latestExportVideoPath = video) }
+    }
+
+    /** 최신 편집본을 입력 영상으로 교체 — 썸네일은 최종본 기준으로 찍는 게 자연스러움. */
+    fun loadLatestExportAsInput() {
+        val path = _uiState.value.latestExportVideoPath ?: return
+        onVideoSelected(java.io.File(path).toUri())
     }
 
     fun onVideoSelected(uri: Uri?) {

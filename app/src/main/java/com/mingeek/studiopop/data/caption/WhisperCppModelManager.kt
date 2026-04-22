@@ -15,14 +15,14 @@ import java.io.FileOutputStream
 /**
  * whisper.cpp 의 GGML 모델(.bin) 자동 다운로드 + 캐시.
  *
- * Variant 별 크기/품질:
- *  - tiny      : 75MB     낮은 정확도, 가장 빠름
- *  - base      : 142MB    중상, 한국어 권장 시작점 (기본값)
- *  - base.q5_0 : 57MB     5-bit 양자화. base 와 거의 동일 정확도, 빠르고 가벼움
- *  - small     : 466MB    상, 가장 정확하나 느림
- *  - small.q5_0: 190MB    5-bit 양자화. small 의 정확도 + 더 작고 빠름 ★ 추천
+ * Variant 별 크기/품질 (2026-04 기준 HuggingFace 실측):
+ *  - tiny     : 74MB      낮은 정확도, 가장 빠름
+ *  - base     : 141MB     중상, 한국어 권장 시작점 (기본값)
+ *  - base.q5  : 57MB      5-bit 양자화. base 와 거의 동일 정확도, 빠르고 가벼움
+ *  - small    : 465MB     상, 가장 정확하나 느림
+ *  - small.q5 : 181MB     5-bit 양자화. small 의 정확도 + 더 작고 빠름 ★ 추천
  *
- * 호스팅: HuggingFace ggerganov/whisper.cpp
+ * 호스팅: HuggingFace ggerganov/whisper.cpp (repo 파일명은 q5_1 로 통일됨 — q5_0 파일은 삭제됨)
  *
  * 멀티 variant 지원: 사용자가 바꿔도 이전 다운로드 유지.
  */
@@ -36,11 +36,11 @@ class WhisperCppModelManager(
         val fileName: String,
         val approxBytes: Long,
     ) {
-        TINY    ("tiny (75MB · 빠름 · 정확도 낮음)",      "ggml-tiny.bin",       75L * 1024 * 1024),
-        BASE    ("base (142MB · 균형)",                    "ggml-base.bin",      142L * 1024 * 1024),
-        BASE_Q5 ("base.q5 (57MB · base 와 동급, 빠름) ★",  "ggml-base.q5_0.bin",  57L * 1024 * 1024),
-        SMALL   ("small (466MB · 가장 정확)",              "ggml-small.bin",     466L * 1024 * 1024),
-        SMALL_Q5("small.q5 (190MB · small 동급, 더 빠름)", "ggml-small.q5_0.bin", 190L * 1024 * 1024),
+        TINY    ("tiny (74MB · 빠름 · 정확도 낮음)",      "ggml-tiny.bin",        74L * 1024 * 1024),
+        BASE    ("base (141MB · 균형)",                    "ggml-base.bin",       141L * 1024 * 1024),
+        BASE_Q5 ("base.q5 (57MB · base 와 동급, 빠름) ★",  "ggml-base-q5_1.bin",   57L * 1024 * 1024),
+        SMALL   ("small (465MB · 가장 정확)",              "ggml-small.bin",      465L * 1024 * 1024),
+        SMALL_Q5("small.q5 (181MB · small 동급, 더 빠름)", "ggml-small-q5_1.bin", 181L * 1024 * 1024),
     }
 
     enum class InstallState { NOT_INSTALLED, DOWNLOADING, READY, FAILED }

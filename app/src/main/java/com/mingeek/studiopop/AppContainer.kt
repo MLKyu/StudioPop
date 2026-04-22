@@ -19,9 +19,13 @@ import com.mingeek.studiopop.data.caption.WhisperCppEngine
 import com.mingeek.studiopop.data.caption.WhisperCppModelManager
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.VideoEditor
+import com.mingeek.studiopop.data.media.AssetBackfillPublisher
+import com.mingeek.studiopop.data.media.MediaStoreSrtPublisher
+import com.mingeek.studiopop.data.media.MediaStoreVideoPublisher
 import com.mingeek.studiopop.data.project.AppDatabase
 import com.mingeek.studiopop.data.project.ProjectRepository
 import com.mingeek.studiopop.data.settings.ApiKeyStore
+import com.mingeek.studiopop.data.shorts.GeminiHighlightPicker
 import com.mingeek.studiopop.data.thumbnail.FaceDetector
 import com.mingeek.studiopop.data.thumbnail.FrameExtractor
 import com.mingeek.studiopop.data.thumbnail.GeminiCopywriter
@@ -149,11 +153,29 @@ class AppContainer(context: Context) {
         )
     }
 
+    val mediaStoreVideoPublisher: MediaStoreVideoPublisher by lazy {
+        MediaStoreVideoPublisher(appContext)
+    }
+
+    val mediaStoreSrtPublisher: MediaStoreSrtPublisher by lazy {
+        MediaStoreSrtPublisher(appContext)
+    }
+
+    val assetBackfillPublisher: AssetBackfillPublisher by lazy {
+        AssetBackfillPublisher(
+            context = appContext,
+            projectRepository = projectRepository,
+            videoPublisher = mediaStoreVideoPublisher,
+            srtPublisher = mediaStoreSrtPublisher,
+        )
+    }
+
     @get:UnstableApi
     val videoEditor: VideoEditor by lazy {
         VideoEditor(
             context = appContext,
             outputDir = appContext.getExternalFilesDir(null) ?: appContext.filesDir,
+            mediaStorePublisher = mediaStoreVideoPublisher,
         )
     }
 
@@ -173,6 +195,14 @@ class AppContainer(context: Context) {
 
     val geminiThumbnailAdvisor: GeminiThumbnailAdvisor by lazy {
         GeminiThumbnailAdvisor(
+            client = okHttpClient,
+            moshi = moshi,
+            apiKeyProvider = { apiKeyStore.getGemini() },
+        )
+    }
+
+    val geminiHighlightPicker: GeminiHighlightPicker by lazy {
+        GeminiHighlightPicker(
             client = okHttpClient,
             moshi = moshi,
             apiKeyProvider = { apiKeyStore.getGemini() },

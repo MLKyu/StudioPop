@@ -49,6 +49,9 @@ data class CaptionUiState(
     val phase: CaptionPhase = CaptionPhase.Idle,
     val cues: List<Cue> = emptyList(),
     val savedFilePath: String? = null,
+    val latestExportVideoPath: String? = null,
+    val latestSrtPath: String? = null,
+    val hasProject: Boolean = false,
 )
 
 class CaptionViewModel(
@@ -104,9 +107,41 @@ class CaptionViewModel(
     fun bindProject(id: Long?) {
         if (id == null || id <= 0 || id == projectId) return
         projectId = id
+        _uiState.update { it.copy(hasProject = true) }
         viewModelScope.launch {
             val project = projectRepository.getProject(id) ?: return@launch
             onVideoSelected(project.sourceVideoUri.toUri())
+            refreshQuickLoad()
+            runCatching { container.assetBackfillPublisher.backfill(id) }
+        }
+    }
+
+    private suspend fun refreshQuickLoad() {
+        val pid = projectId ?: return
+        val video = projectRepository.latestAsset(pid, AssetType.EXPORT_VIDEO)?.value
+        val srt = projectRepository.latestAsset(pid, AssetType.CAPTION_SRT)?.value
+        _uiState.update { it.copy(latestExportVideoPath = video, latestSrtPath = srt) }
+    }
+
+    /** 최신 편집본 영상을 입력 영상으로 교체 — 편집 끝난 영상에 다시 자막을 붙일 때. */
+    fun loadLatestExportAsInput() {
+        val path = _uiState.value.latestExportVideoPath ?: return
+        onVideoSelected(java.io.File(path).toUri())
+    }
+
+    /** 최신 SRT 를 cues 로 불러와 편집 가능 상태로 — 재전사 없이 기존 자막 손보기. */
+    fun loadLatestSrt() {
+        val path = _uiState.value.latestSrtPath ?: return
+        viewModelScope.launch {
+            val text = runCatching { File(path).readText() }.getOrNull() ?: return@launch
+            val cues = Srt.parse(text)
+            _uiState.update {
+                it.copy(
+                    cues = cues,
+                    savedFilePath = path,
+                    phase = CaptionPhase.Ready,
+                )
+            }
         }
     }
 
@@ -196,6 +231,14 @@ class CaptionViewModel(
                             label = "자동 생성 자막",
                         )
                     }
+                    // Download/StudioPop 공용 경로에도 복사 등록 → Files 앱/DocumentPicker 에서 보임.
+                    runCatching {
+                        container.mediaStoreSrtPublisher.publish(
+                            file = outFile,
+                            displayName = "StudioPop_captions_${System.currentTimeMillis()}",
+                        )
+                    }
+                    refreshQuickLoad()
                 }
                 .onFailure { e ->
                     _uiState.update {

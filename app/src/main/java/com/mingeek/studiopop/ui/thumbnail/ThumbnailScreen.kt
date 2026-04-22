@@ -63,6 +63,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mingeek.studiopop.data.thumbnail.DecorationStyle
 import com.mingeek.studiopop.data.thumbnail.TextAnchor
 import com.mingeek.studiopop.data.thumbnail.ThumbnailVariant
+import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,6 +104,15 @@ fun ThumbnailScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (state.hasProject && state.latestExportVideoPath != null) {
+                ProjectQuickLoadCard(
+                    latestExportVideoPath = state.latestExportVideoPath,
+                    latestSrtPath = null,
+                    onLoadVideo = { viewModel.loadLatestExportAsInput() },
+                    onLoadSrt = null,
+                )
+            }
+
             if (state.videoUri == null) {
                 OutlinedButton(
                     onClick = {

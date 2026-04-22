@@ -15,6 +15,9 @@ class ProjectRepository(
     fun observeAssets(projectId: Long): Flow<List<AssetEntity>> =
         assetDao.observeForProject(projectId)
 
+    suspend fun listAssets(projectId: Long): List<AssetEntity> =
+        assetDao.listForProject(projectId)
+
     suspend fun createProject(title: String, sourceVideoUri: String, description: String = ""): Long =
         projectDao.insertProject(
             ProjectEntity(
