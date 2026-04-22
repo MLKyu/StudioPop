@@ -106,8 +106,9 @@ Java_com_mingeek_studiopop_data_caption_WhisperCppEngine_nativeTranscribe(
     wparams.token_timestamps = false;
     wparams.n_threads        = 4;
 
-    // 진행률 콜백 등록 (Kotlin 은 nativeProgress() 로 폴링)
-    g_progress.store(0);
+    // 진행률 콜백 등록. g_progress=1 로 "시작됨" 을 바로 찍어 사용자가 "멈췄다" 로
+    // 착각하지 않게 함 (whisper.cpp 는 내부적으로 기본 5% 단위로 progress_callback 발화).
+    g_progress.store(1);
     wparams.progress_callback           = on_whisper_progress;
     wparams.progress_callback_user_data = nullptr;
 
@@ -122,8 +123,11 @@ Java_com_mingeek_studiopop_data_caption_WhisperCppEngine_nativeTranscribe(
         }
     }
 
-    LOGI("whisper_full 시작: samples=%d, sr=%d", (int) n, sampleRate);
+    LOGI("whisper_full 시작: samples=%d, sr=%d, threads=%d, lang=%s",
+         (int) n, sampleRate, wparams.n_threads,
+         wparams.language ? wparams.language : "(auto)");
     int rc = whisper_full(ctx, wparams, pcmPtr, n);
+    LOGI("whisper_full 종료: rc=%d, segments=%d", rc, rc == 0 ? whisper_full_n_segments(ctx) : 0);
     if (lang != nullptr) env->ReleaseStringUTFChars(language, lang);
     env->ReleaseFloatArrayElements(pcm, pcmPtr, JNI_ABORT);
 

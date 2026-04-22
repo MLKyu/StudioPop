@@ -32,6 +32,9 @@ interface AssetDao {
     @Query("SELECT * FROM assets WHERE projectId = :projectId ORDER BY createdAt DESC")
     fun observeForProject(projectId: Long): Flow<List<AssetEntity>>
 
+    @Query("SELECT * FROM assets WHERE projectId = :projectId ORDER BY createdAt DESC")
+    suspend fun listForProject(projectId: Long): List<AssetEntity>
+
     @Query("""
         SELECT * FROM assets
         WHERE projectId = :projectId AND type = :type

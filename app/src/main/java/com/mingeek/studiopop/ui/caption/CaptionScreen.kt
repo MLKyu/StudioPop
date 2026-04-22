@@ -43,6 +43,7 @@ import com.mingeek.studiopop.data.caption.Cue
 import com.mingeek.studiopop.data.caption.SpeechToText
 import com.mingeek.studiopop.data.caption.SttEngine
 import com.mingeek.studiopop.data.caption.WhisperCppModelManager
+import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +81,19 @@ fun CaptionScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (state.hasProject &&
+                (state.latestExportVideoPath != null || state.latestSrtPath != null)
+            ) {
+                item {
+                    ProjectQuickLoadCard(
+                        latestExportVideoPath = state.latestExportVideoPath,
+                        latestSrtPath = state.latestSrtPath,
+                        onLoadVideo = { viewModel.loadLatestExportAsInput() },
+                        onLoadSrt = { viewModel.loadLatestSrt() },
+                    )
+                }
+            }
+
             item {
                 VideoSection(
                     hasVideo = state.videoUri != null,

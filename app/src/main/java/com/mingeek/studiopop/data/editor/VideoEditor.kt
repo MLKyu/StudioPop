@@ -20,6 +20,7 @@ import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.google.common.collect.ImmutableList
 import com.mingeek.studiopop.data.caption.Cue
+import com.mingeek.studiopop.data.media.MediaStoreVideoPublisher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -37,6 +38,11 @@ import kotlin.coroutines.resumeWithException
 class VideoEditor(
     private val context: Context,
     private val outputDir: File,
+    /**
+     * export 성공 시 결과 영상을 MediaStore.Video 에 복사 등록해 갤러리/PhotoPicker 에 노출.
+     * null 이거나 Android 9 이하면 no-op. 실패해도 export 결과는 그대로 반환.
+     */
+    private val mediaStorePublisher: MediaStoreVideoPublisher? = null,
 ) {
 
     data class EditSpec(
@@ -73,6 +79,7 @@ class VideoEditor(
             awaitExport(transformer, outFile, onProgress) {
                 transformer.start(editedMediaItem, outFile.absolutePath)
             }
+            publishToGalleryQuietly(outFile, "StudioPop_edit_${System.currentTimeMillis()}")
             outFile
         }
     }
@@ -146,8 +153,18 @@ class VideoEditor(
             awaitExport(transformer, outFile, onProgress) {
                 transformer.start(composition, outFile.absolutePath)
             }
+            publishToGalleryQuietly(outFile, "StudioPop_edit_${System.currentTimeMillis()}")
             outFile
         }
+    }
+
+    /**
+     * export 결과를 갤러리에 등록. MediaStore publisher 가 없거나 pre-Q 면 no-op.
+     * 등록 실패는 export 자체를 깨뜨리지 않도록 swallow.
+     */
+    private suspend fun publishToGalleryQuietly(file: File, displayName: String) {
+        val publisher = mediaStorePublisher ?: return
+        runCatching { publisher.publish(file, displayName) }
     }
 
     private fun buildSimpleVideoEffects(spec: EditSpec): ImmutableList<Effect> {
