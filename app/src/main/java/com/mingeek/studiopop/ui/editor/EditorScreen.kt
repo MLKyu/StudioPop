@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
+import com.mingeek.studiopop.data.editor.TransitionKind
 import com.mingeek.studiopop.ui.editor.components.CaptionEditorSheet
 import com.mingeek.studiopop.ui.editor.components.PreviewCaptionOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewPlayer
@@ -156,12 +157,13 @@ fun EditorScreen(
                         isPlaying = state.isPlaying,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    // 전환 켜져 있으면 경계 근처에서 fade-to-black 오버레이 (export 와 동일 공식).
+                    // 전환 켜져 있으면 경계 근처에서 페이드 오버레이 (export 와 동일 공식).
                     if (state.timeline.transitions.enabled) {
                         PreviewTransitionOverlay(
                             boundariesMs = state.timeline.transitionBoundariesRawOutputMs(),
                             currentOutputMs = state.playheadOutputMs,
-                            halfDurationMs = state.timeline.transitions.durationMs / 2,
+                            halfDurationMs = state.timeline.transitions.halfDurationMs,
+                            peakAlpha = state.timeline.transitions.peakAlpha,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -223,12 +225,13 @@ fun EditorScreen(
                 // Tier 2 옵션들: 전환 / BGM / 영상 교체 / SRT
                 OptionsRow(
                     transitionsOn = state.timeline.transitions.enabled,
+                    transitionKind = state.timeline.transitions.kind,
                     canUseTransitions = state.canUseTransitions,
                     bgmLabel = state.timeline.audioTrack?.uri?.toString()
                         ?.substringAfterLast('/')
                         ?: "없음",
                     textLayerCount = state.timeline.textLayers.size,
-                    onToggleTransitions = viewModel::toggleTransitions,
+                    onSelectTransitionKind = viewModel::selectTransitionKind,
                     onPickBgm = { pickBgmLauncher.launch("audio/*") },
                     onRemoveBgm = viewModel::removeBgm,
                     onPickSrt = { pickSrtLauncher.launch("*/*") },
@@ -340,10 +343,11 @@ private fun ToolbarRow(
 @Composable
 private fun OptionsRow(
     transitionsOn: Boolean,
+    transitionKind: TransitionKind,
     canUseTransitions: Boolean,
     bgmLabel: String,
     textLayerCount: Int,
-    onToggleTransitions: () -> Unit,
+    onSelectTransitionKind: (TransitionKind?) -> Unit,
     onPickBgm: () -> Unit,
     onRemoveBgm: () -> Unit,
     onPickSrt: () -> Unit,
@@ -356,11 +360,26 @@ private fun OptionsRow(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // 페이드: 경계에서 완전히 검정으로 빠짐
+            val fadeSelected = transitionsOn && transitionKind == TransitionKind.FADE_TO_BLACK
             FilterChip(
-                selected = transitionsOn,
+                selected = fadeSelected,
                 enabled = canUseTransitions,
-                onClick = onToggleTransitions,
-                label = { Text("전환") },
+                onClick = {
+                    onSelectTransitionKind(if (fadeSelected) null else TransitionKind.FADE_TO_BLACK)
+                },
+                label = { Text("페이드") },
+                leadingIcon = { Icon(Icons.Outlined.Animation, contentDescription = null) },
+            )
+            // 자연스럽게: 얕은 디졸브로 한 영상처럼 이어지는 느낌
+            val dissolveSelected = transitionsOn && transitionKind == TransitionKind.DISSOLVE
+            FilterChip(
+                selected = dissolveSelected,
+                enabled = canUseTransitions,
+                onClick = {
+                    onSelectTransitionKind(if (dissolveSelected) null else TransitionKind.DISSOLVE)
+                },
+                label = { Text("자연스럽게") },
                 leadingIcon = { Icon(Icons.Outlined.Animation, contentDescription = null) },
             )
             FilterChip(

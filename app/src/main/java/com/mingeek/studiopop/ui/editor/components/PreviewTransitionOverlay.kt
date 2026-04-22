@@ -18,13 +18,15 @@ fun PreviewTransitionOverlay(
     boundariesMs: List<Long>,
     currentOutputMs: Long,
     halfDurationMs: Long,
+    peakAlpha: Float,
     modifier: Modifier = Modifier,
 ) {
-    if (boundariesMs.isEmpty() || halfDurationMs <= 0L) return
+    if (boundariesMs.isEmpty() || halfDurationMs <= 0L || peakAlpha <= 0f) return
     val closestDist = boundariesMs.minOf { abs(it - currentOutputMs) }
-    val alpha = if (closestDist < halfDurationMs) {
+    val ramp = if (closestDist < halfDurationMs) {
         1f - (closestDist.toFloat() / halfDurationMs.toFloat())
     } else 0f
+    val alpha = (ramp * peakAlpha).coerceIn(0f, 1f)
     if (alpha <= 0f) return
-    Box(modifier = modifier.background(Color.Black.copy(alpha = alpha.coerceIn(0f, 1f))))
+    Box(modifier = modifier.background(Color.Black.copy(alpha = alpha)))
 }

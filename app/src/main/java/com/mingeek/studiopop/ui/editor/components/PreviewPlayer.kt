@@ -42,6 +42,7 @@ fun PreviewPlayer(
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
 
     val effectiveSegments = remember(timeline) { timeline.effectiveSegments() }
+    val effectiveRawStarts = remember(timeline) { timeline.effectiveRawOutputStarts() }
 
     LaunchedEffect(effectiveSegments) {
         val items = effectiveSegments.map { it.toMediaItem() }
@@ -51,7 +52,9 @@ fun PreviewPlayer(
 
     // 외부 seek 요청 반영 (raw output ms → effective 위치)
     LaunchedEffect(seekToOutputMs) {
-        seekToOutputMs?.let { exoPlayer.seekToRawOutput(timeline, effectiveSegments, it) }
+        seekToOutputMs?.let {
+            exoPlayer.seekToRawOutput(effectiveSegments, effectiveRawStarts, it)
+        }
     }
 
     // 재생/일시정지
@@ -62,7 +65,7 @@ fun PreviewPlayer(
     // 현재 위치 폴링 → raw output ms 로 역매핑해 콜백
     LaunchedEffect(exoPlayer, effectiveSegments) {
         while (true) {
-            val outputMs = exoPlayer.currentRawOutputMs(timeline, effectiveSegments)
+            val outputMs = exoPlayer.currentRawOutputMs(effectiveSegments, effectiveRawStarts)
             onPositionChange(outputMs)
             delay(50L)
         }
@@ -101,29 +104,25 @@ private fun TimelineSegment.toMediaItem(): MediaItem {
 }
 
 /**
- * raw output ms 로 seek. raw → source 변환 후 effective 세그먼트 중 해당 source 위치를 포함하는
- * 항목을 찾아 seek. cut 구간에 떨어지면 다음 effective 세그먼트의 시작으로 스냅.
+ * raw output ms 로 seek. effectiveRawOutputStarts 기반 인덱스 매핑 —
+ * 같은 sourceUri 의 raw 세그먼트가 여러 개여도 인덱스로 구분되어 안전.
+ * rawOutputMs 가 cut 구간(effective 사이 gap) 에 떨어지면 다음 effective 시작으로 스냅.
  */
 private fun Player.seekToRawOutput(
-    timeline: Timeline,
     effective: List<TimelineSegment>,
+    rawStarts: List<Long>,
     rawOutputMs: Long,
 ) {
     if (effective.isEmpty()) return
-    val (rawSeg, sourceT) = timeline.mapOutputToSource(rawOutputMs) ?: run {
-        seekTo(effective.lastIndex, 0L)
-        return
-    }
     effective.forEachIndexed { idx, eff ->
-        if (eff.sourceUri == rawSeg.sourceUri && sourceT in eff.sourceStartMs..eff.sourceEndMs) {
-            seekTo(idx, sourceT - eff.sourceStartMs)
+        val start = rawStarts[idx]
+        val end = start + eff.durationMs
+        if (rawOutputMs in start..end) {
+            seekTo(idx, (rawOutputMs - start).coerceAtLeast(0L))
             return
         }
     }
-    // cut 구간이면 같은 sourceUri 의 다음 effective 시작으로 스냅
-    val nextIdx = effective.indexOfFirst { eff ->
-        eff.sourceUri == rawSeg.sourceUri && eff.sourceStartMs >= sourceT
-    }
+    val nextIdx = rawStarts.indexOfFirst { it >= rawOutputMs }
     if (nextIdx >= 0) {
         seekTo(nextIdx, 0L)
     } else {
@@ -133,14 +132,13 @@ private fun Player.seekToRawOutput(
 
 /**
  * 현재 ExoPlayer 위치(effective) 를 raw output ms 로 역매핑.
+ * `currentMediaItemIndex` 기반이라 같은 URI 가 여러 번 붙어도 올바른 raw 좌표로 매핑됨.
  */
 private fun Player.currentRawOutputMs(
-    timeline: Timeline,
     effective: List<TimelineSegment>,
+    rawStarts: List<Long>,
 ): Long {
     if (effective.isEmpty()) return 0L
     val idx = currentMediaItemIndex.coerceIn(0, effective.lastIndex)
-    val effSeg = effective[idx]
-    val sourceT = effSeg.sourceStartMs + currentPosition.coerceAtLeast(0L)
-    return timeline.mapSourceToOutput(sourceT) ?: 0L
+    return rawStarts[idx] + currentPosition.coerceAtLeast(0L)
 }

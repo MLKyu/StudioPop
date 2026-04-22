@@ -214,7 +214,8 @@ class VideoEditor(
             }
             overlays += FadeAtBoundariesOverlay(
                 boundariesMs = boundaries,
-                halfDurationMs = (timeline.transitions.durationMs / 2).coerceAtLeast(50L),
+                halfDurationMs = timeline.transitions.halfDurationMs.coerceAtLeast(50L),
+                peakAlpha = timeline.transitions.peakAlpha,
             )
         }
 
