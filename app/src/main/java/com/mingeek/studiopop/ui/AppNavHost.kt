@@ -14,6 +14,7 @@ import com.mingeek.studiopop.ui.exports.ExportsScreen
 import com.mingeek.studiopop.ui.home.HomeScreen
 import com.mingeek.studiopop.ui.project.ProjectDetailScreen
 import com.mingeek.studiopop.ui.project.ProjectListScreen
+import com.mingeek.studiopop.ui.settings.SettingsScreen
 import com.mingeek.studiopop.ui.shorts.ShortsScreen
 import com.mingeek.studiopop.ui.thumbnail.ThumbnailScreen
 import com.mingeek.studiopop.ui.upload.UploadScreen
@@ -28,6 +29,7 @@ object Routes {
     const val PROJECT_LIST = "projects"
     const val PROJECT_DETAIL = "project/{projectId}"
     const val EXPORTS = "exports"
+    const val SETTINGS = "settings"
 
     // projectId 를 옵셔널 쿼리 파라미터로 넣는 템플릿
     fun routeWithProject(base: String) = "$base?projectId={projectId}"
@@ -57,7 +59,11 @@ fun AppNavHost() {
                 onNavigateShorts = { nav.navigate(Routes.SHORTS) },
                 onNavigateProjects = { nav.navigate(Routes.PROJECT_LIST) },
                 onNavigateExports = { nav.navigate(Routes.EXPORTS) },
+                onNavigateSettings = { nav.navigate(Routes.SETTINGS) },
             )
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(onNavigateBack = { nav.popBackStack() })
         }
         composable(Routes.EXPORTS) {
             ExportsScreen(onNavigateBack = { nav.popBackStack() })

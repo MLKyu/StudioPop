@@ -1,17 +1,10 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.devtools.ksp)
 }
 
-val localProperties = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
-}
-val openAiApiKey: String = localProperties.getProperty("OPENAI_API_KEY", "")
-val anthropicApiKey: String = localProperties.getProperty("ANTHROPIC_API_KEY", "")
+// API 키는 이제 런타임 DataStore(ApiKeyStore) 에서 관리. 설정 화면에서 입력.
 
 android {
     namespace = "com.mingeek.studiopop"
@@ -31,9 +24,6 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        buildConfigField("String", "OPENAI_API_KEY", "\"$openAiApiKey\"")
-        buildConfigField("String", "ANTHROPIC_API_KEY", "\"$anthropicApiKey\"")
 
         ndk {
             // 64-bit only — Google Play 가 권장. 32-bit 는 emulator/구형용
@@ -68,7 +58,6 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 }
 
@@ -113,6 +102,7 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.vosk.android)
+    implementation(libs.mlkit.face.detection)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.core)

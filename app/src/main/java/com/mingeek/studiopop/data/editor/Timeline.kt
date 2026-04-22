@@ -85,30 +85,39 @@ data class Timeline(
     val outputDurationMs: Long get() = segments.sumOf { it.durationMs }
 
     /**
+     * effectiveSegments() 와 **동일 순서·동일 길이** 로, 각 effective 세그먼트의 raw output
+     * 시작 ms 를 반환. raw 세그먼트를 순서대로 돌며 관련 cut 만 적용해 조각을 만들므로,
+     * 같은 sourceUri 를 가진 raw 세그먼트가 여러 개여도 **인덱스 기반** 으로 안전하게 매핑됨.
+     *
+     * ExoPlayer(effective 재생) 의 `currentMediaItemIndex + currentPosition` 을 raw output ms
+     * 로 역매핑하는 데 사용.
+     */
+    fun effectiveRawOutputStarts(): List<Long> {
+        val result = mutableListOf<Long>()
+        var rawAcc = 0L
+        for (raw in segments) {
+            val applicable = cutRanges.filter { it.sourceUri == raw.sourceUri }
+            var pieces = listOf(raw)
+            for (cut in applicable) {
+                pieces = pieces.flatMap { it.minus(cut) }
+            }
+            for (piece in pieces) {
+                result += rawAcc + (piece.sourceStartMs - raw.sourceStartMs)
+            }
+            rawAcc += raw.durationMs
+        }
+        return result
+    }
+
+    /**
      * effectiveSegments 사이 경계들을 **raw output ms** 로 반환.
      * 프리뷰 전환 오버레이가 플레이헤드(raw 좌표) 기준으로 페이드 거리 계산에 사용.
      */
     fun transitionBoundariesRawOutputMs(): List<Long> {
         val effective = effectiveSegments()
         if (effective.size <= 1) return emptyList()
-        val rawAccBySegId = mutableMapOf<String, Long>()
-        var acc = 0L
-        for (raw in segments) {
-            rawAccBySegId[raw.id] = acc
-            acc += raw.durationMs
-        }
-        val result = mutableListOf<Long>()
-        for (i in 0 until effective.size - 1) {
-            val eff = effective[i]
-            val rawSeg = segments.firstOrNull {
-                it.sourceUri == eff.sourceUri &&
-                eff.sourceStartMs >= it.sourceStartMs &&
-                eff.sourceEndMs <= it.sourceEndMs
-            } ?: continue
-            val rawAcc = rawAccBySegId[rawSeg.id] ?: continue
-            result += rawAcc + (eff.sourceEndMs - rawSeg.sourceStartMs)
-        }
-        return result
+        val starts = effectiveRawOutputStarts()
+        return (0 until effective.size - 1).map { i -> starts[i] + effective[i].durationMs }
     }
 
     /** 출력 시각 → (세그먼트, 해당 세그먼트 내부 source 시각) 매핑 — raw 기준. */
@@ -262,12 +271,28 @@ data class Timeline(
 }
 
 /**
- * 세그먼트 사이 전환 설정. 현재는 페이드-투-블랙 하나만 지원.
+ * 전환 효과 종류.
+ * - [FADE_TO_BLACK]: 경계에서 완전히 검정으로 빠졌다 돌아옴 — 명시적 "전환" 느낌.
+ * - [DISSOLVE]: 짧고 얕게 어두워지는 정도 — 이어지는 한 영상처럼 자연스럽게.
+ */
+enum class TransitionKind(
+    val halfDurationMs: Long,
+    val peakAlpha: Float,
+) {
+    FADE_TO_BLACK(halfDurationMs = 400L, peakAlpha = 1.0f),
+    DISSOLVE(halfDurationMs = 180L, peakAlpha = 0.4f),
+}
+
+/**
+ * 세그먼트 사이 전환 설정. kind 별로 duration/alpha 가 결정됨.
  */
 data class TransitionSettings(
     val enabled: Boolean = false,
-    val durationMs: Long = 800L,
-)
+    val kind: TransitionKind = TransitionKind.FADE_TO_BLACK,
+) {
+    val halfDurationMs: Long get() = kind.halfDurationMs
+    val peakAlpha: Float get() = kind.peakAlpha
+}
 
 /**
  * BGM(또는 다른 오디오) 트랙.

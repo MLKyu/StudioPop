@@ -12,10 +12,12 @@ import java.io.File
 /**
  * OpenAI Whisper API (/v1/audio/transcriptions) 호출 클라이언트.
  * response_format=srt 로 요청하면 SRT 문자열을 그대로 받음.
+ *
+ * [apiKeyProvider] 는 호출 시점에 최신 값을 읽음 → 설정 화면에서 변경 즉시 반영.
  */
 class WhisperClient(
     private val client: OkHttpClient,
-    private val apiKey: String,
+    private val apiKeyProvider: suspend () -> String,
 ) {
 
     /**
@@ -29,7 +31,10 @@ class WhisperClient(
         model: String = "whisper-1",
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            require(apiKey.isNotBlank()) { "OPENAI_API_KEY 가 비어 있습니다. local.properties 확인." }
+            val apiKey = apiKeyProvider()
+            require(apiKey.isNotBlank()) {
+                "OPENAI_API_KEY 가 비어 있습니다. 설정 화면에서 입력하세요."
+            }
             require(audioFile.length() <= MAX_FILE_BYTES) {
                 "파일이 ${MAX_FILE_MB}MB 를 초과합니다 (${audioFile.length() / 1024 / 1024}MB). " +
                         "분할 업로드는 이후 단계에서 구현 예정."

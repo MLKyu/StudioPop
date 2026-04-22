@@ -21,9 +21,13 @@ import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AppDatabase
 import com.mingeek.studiopop.data.project.ProjectRepository
-import com.mingeek.studiopop.data.thumbnail.ClaudeCopywriter
+import com.mingeek.studiopop.data.settings.ApiKeyStore
+import com.mingeek.studiopop.data.thumbnail.FaceDetector
 import com.mingeek.studiopop.data.thumbnail.FrameExtractor
+import com.mingeek.studiopop.data.thumbnail.GeminiCopywriter
+import com.mingeek.studiopop.data.thumbnail.GeminiThumbnailAdvisor
 import com.mingeek.studiopop.data.thumbnail.ThumbnailComposer
+import com.mingeek.studiopop.data.thumbnail.VariantGenerator
 import com.mingeek.studiopop.data.youtube.YouTubeUploader
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -59,6 +63,8 @@ class AppContainer(context: Context) {
 
     val authTokenStore: AuthTokenStore by lazy { AuthTokenStore(appContext) }
 
+    val apiKeyStore: ApiKeyStore by lazy { ApiKeyStore(appContext) }
+
     val googleAuthManager: GoogleAuthManager by lazy { GoogleAuthManager(appContext) }
 
     val youTubeUploader: YouTubeUploader by lazy {
@@ -79,7 +85,7 @@ class AppContainer(context: Context) {
     val whisperClient: WhisperClient by lazy {
         WhisperClient(
             client = okHttpClient,
-            apiKey = BuildConfig.OPENAI_API_KEY,
+            apiKeyProvider = { apiKeyStore.getOpenAi() },
         )
     }
 
@@ -102,7 +108,10 @@ class AppContainer(context: Context) {
     }
 
     private val whisperApiEngine: WhisperApiEngine by lazy {
-        WhisperApiEngine(chunkedTranscriber)
+        WhisperApiEngine(
+            transcriber = chunkedTranscriber,
+            apiKeyProvider = { apiKeyStore.getOpenAi() },
+        )
     }
 
     private val voskEngine: VoskTranscriber by lazy {
@@ -154,11 +163,28 @@ class AppContainer(context: Context) {
 
     val thumbnailComposer: ThumbnailComposer by lazy { ThumbnailComposer() }
 
-    val claudeCopywriter: ClaudeCopywriter by lazy {
-        ClaudeCopywriter(
+    val geminiCopywriter: GeminiCopywriter by lazy {
+        GeminiCopywriter(
             client = okHttpClient,
             moshi = moshi,
-            apiKey = BuildConfig.ANTHROPIC_API_KEY,
+            apiKeyProvider = { apiKeyStore.getGemini() },
+        )
+    }
+
+    val geminiThumbnailAdvisor: GeminiThumbnailAdvisor by lazy {
+        GeminiThumbnailAdvisor(
+            client = okHttpClient,
+            moshi = moshi,
+            apiKeyProvider = { apiKeyStore.getGemini() },
+        )
+    }
+
+    val faceDetector: FaceDetector by lazy { FaceDetector() }
+
+    val variantGenerator: VariantGenerator by lazy {
+        VariantGenerator(
+            advisor = geminiThumbnailAdvisor,
+            faceDetector = faceDetector,
         )
     }
 

@@ -7,8 +7,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -29,9 +33,19 @@ fun HomeScreen(
     onNavigateShorts: () -> Unit,
     onNavigateProjects: () -> Unit,
     onNavigateExports: () -> Unit,
+    onNavigateSettings: () -> Unit,
 ) {
     Scaffold(
-        topBar = { TopAppBar(title = { Text("YT Creator SuperApp") }) }
+        topBar = {
+            TopAppBar(
+                title = { Text("YT Creator SuperApp") },
+                actions = {
+                    IconButton(onClick = onNavigateSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "설정")
+                    }
+                },
+            )
+        }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -64,7 +78,7 @@ fun HomeScreen(
             )
             MenuCard(
                 title = "썸네일 만들기",
-                subtitle = "프레임 + Claude 카피 → 1280×720 PNG",
+                subtitle = "프레임 + Gemini 카피 → 1280×720 PNG",
                 onClick = onNavigateThumbnail,
             )
             MenuCard(

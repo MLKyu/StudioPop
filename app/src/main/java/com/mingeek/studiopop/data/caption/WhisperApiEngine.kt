@@ -1,21 +1,23 @@
 package com.mingeek.studiopop.data.caption
 
 import android.net.Uri
-import com.mingeek.studiopop.BuildConfig
 
 /**
  * 기존 ChunkedTranscriber + WhisperClient 를 SpeechToText 인터페이스로 어댑팅.
+ *
+ * [apiKeyProvider] 는 DataStore 에서 동적으로 키를 읽음 → 설정 화면 변경 즉시 반영.
  */
 class WhisperApiEngine(
     private val transcriber: ChunkedTranscriber,
+    private val apiKeyProvider: suspend () -> String,
 ) : SpeechToText {
 
     override val id = SttEngine.WHISPER_API
 
     override suspend fun isAvailable(): SpeechToText.Availability =
-        if (BuildConfig.OPENAI_API_KEY.isBlank()) {
+        if (apiKeyProvider().isBlank()) {
             SpeechToText.Availability.NeedsSetup(
-                reason = "local.properties 에 OPENAI_API_KEY 가 없습니다.",
+                reason = "설정 화면에서 OpenAI API key 를 입력하세요.",
             )
         } else SpeechToText.Availability.Ready
 

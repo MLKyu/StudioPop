@@ -20,6 +20,7 @@ import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.TextLayer
 import com.mingeek.studiopop.data.editor.Timeline
 import com.mingeek.studiopop.data.editor.TimelineCaption
+import com.mingeek.studiopop.data.editor.TransitionKind
 import com.mingeek.studiopop.data.editor.VideoEditor
 import com.mingeek.studiopop.data.project.AssetType
 import com.mingeek.studiopop.data.project.ProjectRepository
@@ -437,9 +438,19 @@ class EditorViewModel(
     }
 
     // --- 전환 ---
-    fun toggleTransitions() {
+    /**
+     * null → 전환 끔. 그 외 kind → 해당 효과로 켬.
+     */
+    fun selectTransitionKind(
+        kind: TransitionKind?,
+    ) {
         _uiState.update {
-            val t = it.timeline.transitions.copy(enabled = !it.timeline.transitions.enabled)
+            val base = it.timeline.transitions
+            val t = if (kind == null) {
+                base.copy(enabled = false)
+            } else {
+                base.copy(enabled = true, kind = kind)
+            }
             it.copy(timeline = it.timeline.withTransitions(t))
         }
     }
