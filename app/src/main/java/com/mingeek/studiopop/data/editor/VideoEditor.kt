@@ -43,7 +43,28 @@ class VideoEditor(
      * null 이거나 Android 9 이하면 no-op. 실패해도 export 결과는 그대로 반환.
      */
     private val mediaStorePublisher: MediaStoreVideoPublisher? = null,
+    /** SFX 지연 재생용 무음 WAV 생성기. 미지정 시 context.cacheDir 에 생성. */
+    private val silenceGenerator: SilenceAudioGenerator =
+        SilenceAudioGenerator(context.cacheDir),
 ) {
+
+    /** 주어진 ms 길이의 무음 오디오 EditedMediaItem 생성. SFX 앞에 prefix 로 사용. */
+    private fun buildSilenceAudioItem(durationMs: Long): EditedMediaItem {
+        val uri = silenceGenerator.generate(durationMs)
+        return EditedMediaItem.Builder(
+            MediaItem.Builder()
+                .setUri(uri)
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(0L)
+                        .setEndPositionMs(durationMs)
+                        .build()
+                )
+                .build()
+        )
+            .setRemoveVideo(true)
+            .build()
+    }
 
     data class EditSpec(
         val sourceUri: Uri,
@@ -130,6 +151,25 @@ class VideoEditor(
                 sequences += EditedMediaItemSequence(listOf(bgmItem), /* isLooping = */ true)
             }
 
+            // 효과음(SFX): 각 클립마다 [무음 패딩 + SFX 클립] 으로 된 별도 sequence 추가.
+            // Media3 는 여러 audio sequence 를 자동 믹싱하므로 원본 오디오·BGM 과 겹쳐 재생됨.
+            // 무음 패딩으로 "출력 시각 T 에 정확히 재생" 을 구현.
+            val totalOutputMs = effective.sumOf { it.durationMs }
+            for (sfx in timeline.sfxClips) {
+                val windows = timeline.rangeToOutputWindows(sfx.sourceStartMs, sfx.sourceEndMs)
+                val trigger = windows.firstOrNull()?.first ?: continue
+                val silencePrefixMs = trigger.coerceIn(0L, totalOutputMs)
+                val sfxItems = buildList {
+                    if (silencePrefixMs > 0) add(buildSilenceAudioItem(silencePrefixMs))
+                    add(
+                        EditedMediaItem.Builder(MediaItem.fromUri(sfx.audioUri))
+                            .setRemoveVideo(true)
+                            .build()
+                    )
+                }
+                sequences += EditedMediaItemSequence(sfxItems)
+            }
+
             val overlays = buildOverlayList(timeline)
             val videoEffects = ImmutableList.Builder<Effect>().apply {
                 aspectRatio?.let {
@@ -199,6 +239,9 @@ class VideoEditor(
      * 타임라인으로부터 프레임 오버레이 리스트 생성.
      * - 같은 스타일의 자막은 하나의 CaptionOverlay 로 묶음
      * - 텍스트 레이어도 각자 CaptionOverlay 로 추가
+     * - 짤(ImageLayer) 은 레이어별 ImageStickerOverlay
+     * - 모자이크(MosaicRegion) 은 MosaicBlockOverlay
+     * - 고정 텍스트 템플릿은 세그먼트별 cue 로 펼쳐 CaptionOverlay
      * - 전환이 켜져 있으면 FadeAtBoundariesOverlay 추가
      */
     private fun buildOverlayList(timeline: Timeline): List<TextureOverlay> {
@@ -220,6 +263,34 @@ class VideoEditor(
             }
         }
 
+        // 고정 텍스트 템플릿: 각 세그먼트 시간대마다 텍스트(기본 또는 override) 로 펼침
+        val fixedTemplateCues = timeline.fixedTemplatesToOutputCuesByStyle()
+        for ((style, cues) in fixedTemplateCues) {
+            if (cues.isNotEmpty()) {
+                overlays += CaptionOverlay(cues, style)
+            }
+        }
+
+        // 짤(이미지 스티커): 각 레이어별 ImageStickerOverlay
+        for (layer in timeline.imageLayers) {
+            val windows = timeline.rangeToOutputWindows(layer.sourceStartMs, layer.sourceEndMs)
+            if (windows.isNotEmpty()) {
+                overlays += ImageStickerOverlay(layer, windows)
+            }
+        }
+
+        // 모자이크: 각 영역별 MosaicBlockOverlay
+        for (region in timeline.mosaicRegions) {
+            val windows = timeline.rangeToOutputWindows(region.sourceStartMs, region.sourceEndMs)
+            if (windows.isNotEmpty() && region.keyframes.isNotEmpty()) {
+                overlays += MosaicBlockOverlay(
+                    region = region,
+                    activeWindowsMs = windows,
+                    sourceStartMs = region.sourceStartMs,
+                )
+            }
+        }
+
         // 전환: 실제로 concat 되는 effective 세그먼트 경계에 페이드 적용
         val effectiveSegs = timeline.effectiveSegments()
         if (timeline.transitions.enabled && effectiveSegs.size > 1) {
@@ -237,6 +308,72 @@ class VideoEditor(
         }
 
         return overlays
+    }
+
+    /**
+     * (sourceStart, sourceEnd) 를 **effective** segments 에 매핑해 output 시간 범위들로 변환.
+     * effective 기준이라 CutRange 로 제거된 구간은 자동으로 빠짐 — 오버레이가 출력 영상과 정확히 맞물림.
+     * 한 구간이 여러 (effective) 세그먼트에 걸치면 여러 개 조각이 반환됨.
+     */
+    private fun Timeline.rangeToOutputWindows(
+        sourceStartMs: Long,
+        sourceEndMs: Long,
+    ): List<LongRange> {
+        val result = mutableListOf<LongRange>()
+        var accumulated = 0L
+        for (seg in effectiveSegments()) {
+            val overlapStart = maxOf(sourceStartMs, seg.sourceStartMs)
+            val overlapEnd = minOf(sourceEndMs, seg.sourceEndMs)
+            if (overlapEnd > overlapStart) {
+                val outStart = accumulated + (overlapStart - seg.sourceStartMs)
+                val outEnd = accumulated + (overlapEnd - seg.sourceStartMs)
+                result += outStart..outEnd
+            }
+            accumulated += seg.durationMs
+        }
+        return result
+    }
+
+    /**
+     * 주어진 effective 세그먼트를 감싸는 raw 세그먼트 찾기.
+     * CutRange 로 쪼개진 조각이어도 원본 raw 세그먼트의 id 로 override 를 조회할 수 있게 하려는 용도.
+     */
+    private fun Timeline.rawSegmentContaining(effective: TimelineSegment): TimelineSegment? =
+        segments.firstOrNull { raw ->
+            raw.sourceUri == effective.sourceUri &&
+                effective.sourceStartMs >= raw.sourceStartMs &&
+                effective.sourceEndMs <= raw.sourceEndMs
+        }
+
+    /**
+     * 고정 텍스트 템플릿을 effective 세그먼트별로 펼쳐 (style, cues) 맵 생성.
+     * 각 effective 세그먼트 duration 만큼의 cue 한 개씩. override 는 해당 effective 를 감싸는
+     * raw 세그먼트 id 기준으로 조회 — cut 때문에 쪼개진 sub-segment 도 부모의 override 를 공유.
+     * 빈 문자열 cue 는 제외(해당 구간엔 아무것도 안 보임).
+     */
+    private fun Timeline.fixedTemplatesToOutputCuesByStyle(): Map<CaptionStyle, List<Cue>> {
+        if (fixedTemplates.isEmpty()) return emptyMap()
+        val cuesByStyle = mutableMapOf<CaptionStyle, MutableList<Cue>>()
+        for (template in fixedTemplates) {
+            if (!template.enabled) continue
+            val style = template.resolvedStyle()
+            val bucket = cuesByStyle.getOrPut(style) { mutableListOf() }
+            var accumulated = 0L
+            for (seg in effectiveSegments()) {
+                val parent = rawSegmentContaining(seg)
+                val text = parent?.id?.let { template.perSegmentText[it] } ?: template.defaultText
+                if (text.isNotBlank()) {
+                    bucket += Cue(
+                        index = bucket.size + 1,
+                        startMs = accumulated,
+                        endMs = accumulated + seg.durationMs,
+                        text = text,
+                    )
+                }
+                accumulated += seg.durationMs
+            }
+        }
+        return cuesByStyle
     }
 
     /**
@@ -262,15 +399,16 @@ class VideoEditor(
     }
 
     /**
-     * (sourceStart, sourceEnd, text) 리스트를 현재 세그먼트 구성에 맞춰 출력 Cue 로 변환.
-     * 한 입력이 여러 세그먼트에 걸치면 조각으로 분리됨.
+     * (sourceStart, sourceEnd, text) 리스트를 **effective** 세그먼트 구성에 맞춰 출력 Cue 로 변환.
+     * effective 기준이라 CutRange 로 제거된 구간의 캡션은 자동으로 빠지고, 나머지는 올바른 출력 시각으로 매핑됨.
+     * 한 입력이 여러 effective 세그먼트에 걸치면 조각으로 분리됨.
      */
     private fun Timeline.captionsToOutputCues(
         inputs: List<Pair<Pair<Long, Long>, String>>,
     ): List<Cue> {
         val result = mutableListOf<Cue>()
         var accumulated = 0L
-        for (seg in segments) {
+        for (seg in effectiveSegments()) {
             for ((range, text) in inputs) {
                 val (srcStart, srcEnd) = range
                 val overlapStart = maxOf(srcStart, seg.sourceStartMs)

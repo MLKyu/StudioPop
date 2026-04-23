@@ -16,15 +16,27 @@ import com.mingeek.studiopop.data.caption.Srt
 import com.mingeek.studiopop.data.editor.AudioTrack
 import com.mingeek.studiopop.data.editor.CaptionStyle
 import com.mingeek.studiopop.data.editor.CutRange
+import com.mingeek.studiopop.data.editor.FaceTracker
+import com.mingeek.studiopop.data.editor.FixedTextTemplate
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
+import com.mingeek.studiopop.data.editor.ImageLayer
+import com.mingeek.studiopop.data.editor.MosaicKeyframe
+import com.mingeek.studiopop.data.editor.MosaicMode
+import com.mingeek.studiopop.data.editor.MosaicRegion
+import com.mingeek.studiopop.data.editor.SfxClip
+import com.mingeek.studiopop.data.editor.TemplateAnchor
 import com.mingeek.studiopop.data.editor.TextLayer
 import com.mingeek.studiopop.data.editor.Timeline
 import com.mingeek.studiopop.data.editor.TimelineCaption
 import com.mingeek.studiopop.data.editor.TransitionKind
 import com.mingeek.studiopop.data.editor.VideoEditor
+import com.mingeek.studiopop.data.library.LibraryAssetEntity
+import com.mingeek.studiopop.data.library.LibraryAssetKind
+import com.mingeek.studiopop.data.library.LibraryAssetRepository
 import com.mingeek.studiopop.data.project.AssetType
 import com.mingeek.studiopop.data.project.ProjectRepository
 import com.mingeek.studiopop.ui.editor.components.EditableTextItem
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +54,9 @@ sealed interface ExportPhase {
 
 enum class EditKind { CAPTION, TEXT_LAYER }
 
+/** 편집기에서 현재 열려있는 서브시트 종류. null 이면 시트 닫힘. */
+enum class EditorSheet { IMAGE_PICKER, SFX_PICKER, MOSAIC, FIXED_TEMPLATE }
+
 data class EditorUiState(
     val timeline: Timeline = Timeline(segments = emptyList()),
     /** 영상 Uri → (총 길이, 프레임 스트립). 세그먼트가 sourceUri 별로 조회. */
@@ -51,6 +66,17 @@ data class EditorUiState(
     val seekRequest: Long? = null,
     val editingItem: EditableTextItem? = null,
     val editingKind: EditKind? = null,
+    /** 현재 열려있는 서브시트 (짤/효과음 피커, 모자이크 에디터 등). */
+    val activeSheet: EditorSheet? = null,
+    /** 라이브러리 목록 (시트에서 사용). */
+    val stickerLibrary: List<LibraryAssetEntity> = emptyList(),
+    val sfxLibrary: List<LibraryAssetEntity> = emptyList(),
+    /** 선택된 ImageLayer/MosaicRegion/FixedTemplate id — 편집 대상. */
+    val selectedImageLayerId: String? = null,
+    val selectedMosaicId: String? = null,
+    val selectedFixedTemplateId: String? = null,
+    /** 얼굴 자동감지 중 상태. 진행 중이면 true. */
+    val isDetectingFaces: Boolean = false,
     val phase: ExportPhase = ExportPhase.Idle,
     /** 프로젝트의 최신 EXPORT_VIDEO 파일 경로. 퀵 로드 카드에서 사용. */
     val latestExportVideoPath: String? = null,
@@ -72,12 +98,27 @@ class EditorViewModel(
     private val videoEditor: VideoEditor,
     private val frameStripGenerator: FrameStripGenerator,
     private val projectRepository: ProjectRepository,
+    private val libraryAssetRepository: LibraryAssetRepository,
+    private val faceTracker: FaceTracker,
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
 
     private var projectId: Long? = null
+
+    init {
+        viewModelScope.launch {
+            libraryAssetRepository.observe(LibraryAssetKind.STICKER).collect { list ->
+                _uiState.update { it.copy(stickerLibrary = list) }
+            }
+        }
+        viewModelScope.launch {
+            libraryAssetRepository.observe(LibraryAssetKind.SFX).collect { list ->
+                _uiState.update { it.copy(sfxLibrary = list) }
+            }
+        }
+    }
 
     fun bindProject(id: Long?) {
         if (id == null || id <= 0 || id == projectId) return
@@ -513,6 +554,277 @@ class EditorViewModel(
         _uiState.update { it.copy(timeline = it.timeline.withAudioTrack(null)) }
     }
 
+    // --- 서브시트 토글 ---
+    fun openSheet(sheet: EditorSheet) = _uiState.update { it.copy(activeSheet = sheet) }
+    fun closeSheet() = _uiState.update { it.copy(activeSheet = null) }
+
+    // --- 짤(ImageLayer) ---
+    /**
+     * 라이브러리에서 선택한 짤을 현재 플레이헤드 위치에 추가. 기본 2초 지속.
+     */
+    fun addImageLayerFromLibrary(asset: LibraryAssetEntity) {
+        val state = _uiState.value
+        val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs) ?: return
+        val srcEnd = (sourceT + DEFAULT_NEW_DURATION_MS).coerceAtMost(seg.sourceEndMs)
+        val uri = File(asset.filePath).toUri()
+        val layer = ImageLayer(
+            sourceStartMs = sourceT,
+            sourceEndMs = srcEnd,
+            imageUri = uri,
+        )
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.addImageLayer(layer),
+                selectedImageLayerId = layer.id,
+                activeSheet = null,
+            )
+        }
+    }
+
+    fun updateImageLayer(layer: ImageLayer) {
+        _uiState.update { it.copy(timeline = it.timeline.updateImageLayer(layer)) }
+    }
+
+    fun deleteImageLayer(id: String) {
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.deleteImageLayer(id),
+                selectedImageLayerId = if (it.selectedImageLayerId == id) null else it.selectedImageLayerId,
+            )
+        }
+    }
+
+    fun selectImageLayer(id: String?) = _uiState.update { it.copy(selectedImageLayerId = id) }
+
+    fun onImageLayerResize(id: String, startDeltaMs: Long, endDeltaMs: Long) {
+        _uiState.update { state ->
+            val layer = state.timeline.imageLayers.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (layer.sourceStartMs + startDeltaMs).coerceAtLeast(0L)
+            val newEnd = (layer.sourceEndMs + endDeltaMs).coerceAtLeast(newStart + MIN_OVERLAY_DURATION_MS)
+            state.copy(timeline = state.timeline.updateImageLayer(layer.copy(sourceStartMs = newStart, sourceEndMs = newEnd)))
+        }
+    }
+
+    fun onImageLayerTranslate(id: String, deltaMs: Long) {
+        _uiState.update { state ->
+            val layer = state.timeline.imageLayers.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (layer.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val duration = layer.sourceEndMs - layer.sourceStartMs
+            state.copy(timeline = state.timeline.updateImageLayer(
+                layer.copy(sourceStartMs = newStart, sourceEndMs = newStart + duration)
+            ))
+        }
+    }
+
+    // --- 효과음(SfxClip) ---
+    /**
+     * 라이브러리에서 선택한 효과음을 현재 플레이헤드 지점에 삽입.
+     * SFX 자체 길이가 있으면 그만큼, 없으면 기본값 사용.
+     */
+    fun addSfxFromLibrary(asset: LibraryAssetEntity) {
+        val state = _uiState.value
+        val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs) ?: return
+        val sfxDuration = if (asset.durationMs > 0) asset.durationMs else DEFAULT_SFX_DURATION_MS
+        val srcEnd = (sourceT + sfxDuration).coerceAtMost(seg.sourceEndMs)
+        val uri = File(asset.filePath).toUri()
+        val clip = SfxClip(
+            sourceStartMs = sourceT,
+            sourceEndMs = srcEnd,
+            audioUri = uri,
+            label = asset.label,
+        )
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.addSfxClip(clip),
+                activeSheet = null,
+            )
+        }
+    }
+
+    fun deleteSfxClip(id: String) {
+        _uiState.update { it.copy(timeline = it.timeline.deleteSfxClip(id)) }
+    }
+
+    fun onSfxTranslate(id: String, deltaMs: Long) {
+        _uiState.update { state ->
+            val clip = state.timeline.sfxClips.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (clip.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val duration = clip.sourceEndMs - clip.sourceStartMs
+            state.copy(timeline = state.timeline.updateSfxClip(
+                clip.copy(sourceStartMs = newStart, sourceEndMs = newStart + duration)
+            ))
+        }
+    }
+
+    // --- 모자이크(MosaicRegion) ---
+    /**
+     * 현재 플레이헤드 위치에 수동 모자이크 영역 추가. 기본 중앙 사각형.
+     * 추후 프리뷰에서 드래그로 rect 조정.
+     */
+    fun addManualMosaicAtPlayhead() {
+        val state = _uiState.value
+        val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs) ?: return
+        val srcEnd = (sourceT + DEFAULT_MOSAIC_DURATION_MS).coerceAtMost(seg.sourceEndMs)
+        val region = MosaicRegion(
+            sourceStartMs = sourceT,
+            sourceEndMs = srcEnd,
+            mode = MosaicMode.MANUAL,
+            keyframes = listOf(
+                MosaicKeyframe(sourceTimeMs = sourceT, cx = 0f, cy = 0.2f, w = 0.4f, h = 0.4f),
+            ),
+        )
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.addMosaicRegion(region),
+                selectedMosaicId = region.id,
+            )
+        }
+    }
+
+    /**
+     * 현재 플레이헤드가 속한 세그먼트의 [sourceStart, sourceEnd] 구간에서 얼굴을 자동 탐지해
+     * MosaicRegion 을 추가. 범위는 기본 세그먼트 끝까지 (최대 10초).
+     */
+    fun addAutoFaceMosaicFromPlayhead() {
+        val state = _uiState.value
+        val (seg, sourceT) = state.timeline.mapOutputToSource(state.playheadOutputMs) ?: return
+        val srcEnd = (sourceT + AUTO_FACE_DEFAULT_RANGE_MS).coerceAtMost(seg.sourceEndMs)
+        if (srcEnd <= sourceT) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDetectingFaces = true) }
+            val keyframes = faceTracker.track(seg.sourceUri, sourceT, srcEnd)
+            if (keyframes.isEmpty()) {
+                _uiState.update {
+                    it.copy(
+                        isDetectingFaces = false,
+                        phase = ExportPhase.Error("얼굴을 찾지 못했어요. 수동 모자이크를 써보세요."),
+                    )
+                }
+                return@launch
+            }
+            val region = MosaicRegion(
+                sourceStartMs = sourceT,
+                sourceEndMs = srcEnd,
+                mode = MosaicMode.AUTO_FACE,
+                keyframes = keyframes,
+            )
+            _uiState.update {
+                it.copy(
+                    isDetectingFaces = false,
+                    timeline = it.timeline.addMosaicRegion(region),
+                    selectedMosaicId = region.id,
+                )
+            }
+        }
+    }
+
+    fun selectMosaic(id: String?) = _uiState.update { it.copy(selectedMosaicId = id) }
+
+    fun deleteMosaic(id: String) {
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.deleteMosaicRegion(id),
+                selectedMosaicId = if (it.selectedMosaicId == id) null else it.selectedMosaicId,
+            )
+        }
+    }
+
+    /**
+     * 수동 모자이크의 단일 키프레임 rect 를 업데이트. AUTO_FACE 모드는 변경 안 함.
+     */
+    fun updateManualMosaicRect(id: String, cx: Float, cy: Float, w: Float, h: Float) {
+        _uiState.update { state ->
+            val region = state.timeline.mosaicRegions.firstOrNull { it.id == id } ?: return@update state
+            if (region.mode != MosaicMode.MANUAL) return@update state
+            val kf = region.keyframes.firstOrNull() ?: MosaicKeyframe(region.sourceStartMs, cx, cy, w, h)
+            val updated = region.copy(
+                keyframes = listOf(
+                    kf.copy(cx = cx, cy = cy, w = w, h = h),
+                )
+            )
+            state.copy(timeline = state.timeline.updateMosaicRegion(updated))
+        }
+    }
+
+    fun onMosaicResize(id: String, startDeltaMs: Long, endDeltaMs: Long) {
+        _uiState.update { state ->
+            val region = state.timeline.mosaicRegions.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (region.sourceStartMs + startDeltaMs).coerceAtLeast(0L)
+            val newEnd = (region.sourceEndMs + endDeltaMs).coerceAtLeast(newStart + MIN_OVERLAY_DURATION_MS)
+            state.copy(timeline = state.timeline.updateMosaicRegion(region.copy(sourceStartMs = newStart, sourceEndMs = newEnd)))
+        }
+    }
+
+    fun onMosaicTranslate(id: String, deltaMs: Long) {
+        _uiState.update { state ->
+            val region = state.timeline.mosaicRegions.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (region.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val duration = region.sourceEndMs - region.sourceStartMs
+            state.copy(timeline = state.timeline.updateMosaicRegion(
+                region.copy(sourceStartMs = newStart, sourceEndMs = newStart + duration)
+            ))
+        }
+    }
+
+    // --- 고정 텍스트 템플릿 ---
+    fun addFixedTemplate(anchor: TemplateAnchor, defaultText: String) {
+        val label = when (anchor) {
+            TemplateAnchor.TOP_LEFT -> "좌상단"
+            TemplateAnchor.TOP_CENTER -> "상단"
+            TemplateAnchor.TOP_RIGHT -> "우상단"
+            TemplateAnchor.BOTTOM_LEFT -> "좌하단"
+            TemplateAnchor.BOTTOM_CENTER -> "하단"
+            TemplateAnchor.BOTTOM_RIGHT -> "우하단"
+        }
+        val template = FixedTextTemplate(
+            label = label,
+            anchor = anchor,
+            defaultText = defaultText,
+            style = CaptionStyle.DEFAULT.copy(sizeScale = 0.7f),
+        )
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.addFixedTemplate(template),
+                selectedFixedTemplateId = template.id,
+            )
+        }
+    }
+
+    fun updateFixedTemplateDefault(id: String, newDefault: String) {
+        _uiState.update { state ->
+            val t = state.timeline.fixedTemplates.firstOrNull { it.id == id } ?: return@update state
+            state.copy(timeline = state.timeline.updateFixedTemplate(t.copy(defaultText = newDefault)))
+        }
+    }
+
+    fun updateFixedTemplateOverride(id: String, segmentId: String, text: String) {
+        _uiState.update { state ->
+            val t = state.timeline.fixedTemplates.firstOrNull { it.id == id } ?: return@update state
+            val newMap = if (text.isBlank()) t.perSegmentText - segmentId
+                         else t.perSegmentText + (segmentId to text)
+            state.copy(timeline = state.timeline.updateFixedTemplate(t.copy(perSegmentText = newMap)))
+        }
+    }
+
+    fun toggleFixedTemplate(id: String) {
+        _uiState.update { state ->
+            val t = state.timeline.fixedTemplates.firstOrNull { it.id == id } ?: return@update state
+            state.copy(timeline = state.timeline.updateFixedTemplate(t.copy(enabled = !t.enabled)))
+        }
+    }
+
+    fun deleteFixedTemplate(id: String) {
+        _uiState.update {
+            it.copy(
+                timeline = it.timeline.deleteFixedTemplate(id),
+                selectedFixedTemplateId = if (it.selectedFixedTemplateId == id) null else it.selectedFixedTemplateId,
+            )
+        }
+    }
+
+    fun selectFixedTemplate(id: String?) = _uiState.update { it.copy(selectedFixedTemplateId = id) }
+
     // --- Export ---
     fun startExport() {
         val state = _uiState.value
@@ -586,6 +898,9 @@ class EditorViewModel(
     companion object {
         private const val DEFAULT_NEW_DURATION_MS = 2_000L
         private const val DEFAULT_CUT_DURATION_MS = 2_000L
+        private const val DEFAULT_SFX_DURATION_MS = 1_500L
+        private const val DEFAULT_MOSAIC_DURATION_MS = 3_000L
+        private const val AUTO_FACE_DEFAULT_RANGE_MS = 10_000L
         private const val MIN_OVERLAY_DURATION_MS = 200L
 
         val Factory: ViewModelProvider.Factory = viewModelFactory {
@@ -596,6 +911,8 @@ class EditorViewModel(
                     videoEditor = app.container.videoEditor,
                     frameStripGenerator = app.container.frameStripGenerator,
                     projectRepository = app.container.projectRepository,
+                    libraryAssetRepository = app.container.libraryAssetRepository,
+                    faceTracker = app.container.faceTracker,
                 )
             }
         }

@@ -17,8 +17,10 @@ import com.mingeek.studiopop.data.caption.WhisperApiEngine
 import com.mingeek.studiopop.data.caption.WhisperClient
 import com.mingeek.studiopop.data.caption.WhisperCppEngine
 import com.mingeek.studiopop.data.caption.WhisperCppModelManager
+import com.mingeek.studiopop.data.editor.FaceTracker
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.VideoEditor
+import com.mingeek.studiopop.data.library.LibraryAssetRepository
 import com.mingeek.studiopop.data.media.AssetBackfillPublisher
 import com.mingeek.studiopop.data.media.MediaStoreSrtPublisher
 import com.mingeek.studiopop.data.media.MediaStoreVideoPublisher
@@ -223,6 +225,12 @@ class AppContainer(context: Context) {
     val projectRepository: ProjectRepository by lazy {
         ProjectRepository(database.projectDao(), database.assetDao())
     }
+
+    val libraryAssetRepository: LibraryAssetRepository by lazy {
+        LibraryAssetRepository(appContext, database.libraryAssetDao())
+    }
+
+    val faceTracker: FaceTracker by lazy { FaceTracker(appContext, faceDetector) }
 }
 
 class StudioPopApp : android.app.Application() {

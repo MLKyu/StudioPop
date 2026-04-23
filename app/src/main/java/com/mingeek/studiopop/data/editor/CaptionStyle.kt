@@ -2,11 +2,14 @@ package com.mingeek.studiopop.data.editor
 
 /**
  * 자막(또는 텍스트 오버레이) 렌더링 스타일.
- * 좌표: anchorY = 세로 위치 NDC (-1..1, -1=하단, 1=상단). 기본은 하단 근처(-0.8).
+ * 좌표: NDC (-1..1).
+ * - anchorY: -1=하단, 1=상단 (기본 -0.8)
+ * - anchorX: -1=좌측, 1=우측 (기본 0 = 가운데). 고정 텍스트 템플릿에서 좌상단/우하단 등 배치용.
  */
 data class CaptionStyle(
     val preset: CaptionPreset,
     val anchorY: Float = -0.8f,
+    val anchorX: Float = 0f,
     val sizeScale: Float = 1f,
 ) {
     val textColor: Int get() = preset.textColor

@@ -61,6 +61,37 @@ android {
     }
 }
 
+// 빌드 APK 파일명 커스터마이즈: "StudioPop-v<versionName>-<buildType>.apk"
+// AGP 9 에서 VariantOutput.outputFileName 이 제거돼 직접 이름 변경 불가 — assemble 태스크 이후
+// 원본(app-<buildType>.apk) 을 사용자 친화적 이름으로 복사. 원본도 그대로 남아 Gradle 출력 추적 호환.
+androidComponents {
+    onVariants { variant ->
+        val appName = "StudioPop"
+        afterEvaluate {
+            val capitalized = variant.name.replaceFirstChar { it.uppercase() }
+            tasks.findByName("assemble$capitalized")?.doLast {
+                val version = variant.outputs.firstOrNull()?.versionName?.orNull ?: "dev"
+                val outputDir = layout.buildDirectory
+                    .dir("outputs/apk/${variant.name}").get().asFile
+                // 서명 유무에 따라 원본 이름이 app-release.apk 또는 app-release-unsigned.apk 로 갈림.
+                // 프리픽스 + .apk 로 매칭해 모든 케이스 커버.
+                val source = outputDir.listFiles()
+                    ?.firstOrNull {
+                        it.name.startsWith("app-${variant.name}") &&
+                                it.name.endsWith(".apk") &&
+                                !it.name.startsWith(appName)
+                    }
+                if (source != null) {
+                    val target = outputDir.resolve(
+                        "$appName-v$version-${variant.buildType}.apk"
+                    )
+                    source.copyTo(target, overwrite = true)
+                }
+            }
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

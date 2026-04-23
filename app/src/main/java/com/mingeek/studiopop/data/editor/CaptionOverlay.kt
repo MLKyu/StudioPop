@@ -31,7 +31,7 @@ class CaptionOverlay(
 
     private val settings: OverlaySettings =
         OverlaySettings.Builder()
-            .setBackgroundFrameAnchor(0f, style.anchorY)
+            .setBackgroundFrameAnchor(style.anchorX, style.anchorY)
             .setScale(style.sizeScale, style.sizeScale)
             .build()
 

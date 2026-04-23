@@ -45,6 +45,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
+    onNavigateLibrary: () -> Unit = {},
     viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -106,6 +107,28 @@ fun SettingsScreen(
                 onClick = viewModel::save,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("저장") }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "짤 / 효과음 라이브러리",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "편집기에서 영상 위에 올릴 이미지(짤)와 효과음을 미리 등록해두고 재사용해요.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = onNavigateLibrary,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("라이브러리 관리") }
+                }
+            }
         }
     }
 }
