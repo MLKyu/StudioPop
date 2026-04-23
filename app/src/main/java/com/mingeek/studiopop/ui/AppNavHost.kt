@@ -12,6 +12,7 @@ import com.mingeek.studiopop.ui.caption.CaptionScreen
 import com.mingeek.studiopop.ui.editor.EditorScreen
 import com.mingeek.studiopop.ui.exports.ExportsScreen
 import com.mingeek.studiopop.ui.home.HomeScreen
+import com.mingeek.studiopop.ui.library.AssetLibraryScreen
 import com.mingeek.studiopop.ui.project.ProjectDetailScreen
 import com.mingeek.studiopop.ui.project.ProjectListScreen
 import com.mingeek.studiopop.ui.settings.SettingsScreen
@@ -30,6 +31,7 @@ object Routes {
     const val PROJECT_DETAIL = "project/{projectId}"
     const val EXPORTS = "exports"
     const val SETTINGS = "settings"
+    const val LIBRARY = "library"
 
     // projectId 를 옵셔널 쿼리 파라미터로 넣는 템플릿
     fun routeWithProject(base: String) = "$base?projectId={projectId}"
@@ -63,7 +65,13 @@ fun AppNavHost() {
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(onNavigateBack = { nav.popBackStack() })
+            SettingsScreen(
+                onNavigateBack = { nav.popBackStack() },
+                onNavigateLibrary = { nav.navigate(Routes.LIBRARY) },
+            )
+        }
+        composable(Routes.LIBRARY) {
+            AssetLibraryScreen(onNavigateBack = { nav.popBackStack() })
         }
         composable(Routes.EXPORTS) {
             ExportsScreen(onNavigateBack = { nav.popBackStack() })
@@ -124,10 +132,17 @@ fun AppNavHost() {
             arguments = projectIdArg,
         ) { backStack ->
             val pid = backStack.arguments?.getLong("projectId")?.takeIf { it > 0 }
-            EditorScreen(onNavigateBack = { nav.popBackStack() }, projectId = pid)
+            EditorScreen(
+                onNavigateBack = { nav.popBackStack() },
+                projectId = pid,
+                onNavigateLibrary = { nav.navigate(Routes.LIBRARY) },
+            )
         }
         composable(Routes.EDITOR) {
-            EditorScreen(onNavigateBack = { nav.popBackStack() })
+            EditorScreen(
+                onNavigateBack = { nav.popBackStack() },
+                onNavigateLibrary = { nav.navigate(Routes.LIBRARY) },
+            )
         }
         composable(
             route = Routes.routeWithProject(Routes.THUMBNAIL),

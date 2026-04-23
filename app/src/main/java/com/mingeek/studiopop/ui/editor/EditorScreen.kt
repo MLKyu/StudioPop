@@ -22,10 +22,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Subtitles
@@ -57,11 +61,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.data.editor.TransitionKind
+import com.mingeek.studiopop.data.library.LibraryAssetKind
 import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
 import com.mingeek.studiopop.ui.editor.components.CaptionEditorSheet
+import com.mingeek.studiopop.ui.editor.components.FixedTemplateEditorSheet
+import com.mingeek.studiopop.ui.editor.components.LibraryPickerSheet
+import com.mingeek.studiopop.ui.editor.components.MosaicEditorSheet
 import com.mingeek.studiopop.ui.editor.components.PreviewCaptionOverlay
+import com.mingeek.studiopop.ui.editor.components.PreviewFixedTemplateOverlay
+import com.mingeek.studiopop.ui.editor.components.PreviewMosaicOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewPlayer
+import com.mingeek.studiopop.ui.editor.components.PreviewStickerOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewTransitionOverlay
+import com.mingeek.studiopop.ui.editor.components.SfxPreviewPlayer
 import com.mingeek.studiopop.ui.editor.components.TimelineView
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,6 +82,7 @@ import com.mingeek.studiopop.ui.editor.components.TimelineView
 fun EditorScreen(
     onNavigateBack: () -> Unit,
     projectId: Long? = null,
+    onNavigateLibrary: () -> Unit = {},
     viewModel: EditorViewModel = viewModel(factory = EditorViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -188,21 +201,69 @@ fun EditorScreen(
                         onTextLayerAnchorChange = viewModel::onTextLayerAnchorChange,
                         modifier = Modifier.fillMaxSize(),
                     )
+                    // 짤(이미지 레이어). 드래그로 이동.
+                    PreviewStickerOverlay(
+                        timeline = state.timeline,
+                        currentOutputMs = state.playheadOutputMs,
+                        selectedId = state.selectedImageLayerId,
+                        onSelect = viewModel::selectImageLayer,
+                        onMove = { id, x, y ->
+                            state.timeline.imageLayers.firstOrNull { it.id == id }?.let {
+                                viewModel.updateImageLayer(it.copy(centerX = x, centerY = y))
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    // 모자이크 박스. MANUAL 이면 드래그로 이동.
+                    PreviewMosaicOverlay(
+                        timeline = state.timeline,
+                        currentOutputMs = state.playheadOutputMs,
+                        selectedId = state.selectedMosaicId,
+                        onSelect = viewModel::selectMosaic,
+                        onManualMove = { id, cx, cy ->
+                            // w,h 는 현재 유지 → 기존 keyframe 에서 읽기
+                            val region = state.timeline.mosaicRegions.firstOrNull { it.id == id }
+                            val kf = region?.keyframes?.firstOrNull()
+                            if (kf != null) {
+                                viewModel.updateManualMosaicRect(id, cx, cy, kf.w, kf.h)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    // 고정 텍스트 템플릿 (세그먼트별 override 자동 반영).
+                    PreviewFixedTemplateOverlay(
+                        timeline = state.timeline,
+                        currentOutputMs = state.playheadOutputMs,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     if (state.seekRequest != null) {
                         LaunchedEffect(state.seekRequest) { viewModel.consumeSeekRequest() }
                     }
                 }
+
+                // SFX 프리뷰 트리거 (보이지 않는 composable).
+                SfxPreviewPlayer(
+                    timeline = state.timeline,
+                    playheadOutputMs = state.playheadOutputMs,
+                    isPlaying = state.isPlaying,
+                )
 
                 ToolbarRow(
                     isPlaying = state.isPlaying,
                     playheadMs = state.playheadOutputMs,
                     totalOutputMs = state.timeline.outputDurationMs,
                     canDelete = state.canDelete,
+                    hasStickerLibrary = state.stickerLibrary.isNotEmpty(),
+                    hasSfxLibrary = state.sfxLibrary.isNotEmpty(),
                     onTogglePlay = viewModel::togglePlay,
                     onAddCutRange = viewModel::addCutRangeAtPlayhead,
                     onDelete = viewModel::deleteCurrentSegment,
                     onAddCaption = viewModel::openCaptionEditorForNew,
                     onAddTextLayer = viewModel::openTextLayerEditorForNew,
+                    onAddSticker = { viewModel.openSheet(EditorSheet.IMAGE_PICKER) },
+                    onAddSfx = { viewModel.openSheet(EditorSheet.SFX_PICKER) },
+                    onOpenMosaic = { viewModel.openSheet(EditorSheet.MOSAIC) },
+                    onOpenFixedTemplate = { viewModel.openSheet(EditorSheet.FIXED_TEMPLATE) },
                     onAddVideo = {
                         addVideoLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
@@ -271,6 +332,49 @@ fun EditorScreen(
             onDelete = if (item.existsInTimeline) { { viewModel.deleteEditingItem() } } else null,
         )
     }
+
+    when (state.activeSheet) {
+        EditorSheet.IMAGE_PICKER -> LibraryPickerSheet(
+            title = "짤 선택",
+            kind = LibraryAssetKind.STICKER,
+            items = state.stickerLibrary,
+            onPick = viewModel::addImageLayerFromLibrary,
+            onDismiss = viewModel::closeSheet,
+            onNavigateLibrary = {
+                viewModel.closeSheet()
+                onNavigateLibrary()
+            },
+        )
+        EditorSheet.SFX_PICKER -> LibraryPickerSheet(
+            title = "효과음 선택",
+            kind = LibraryAssetKind.SFX,
+            items = state.sfxLibrary,
+            onPick = viewModel::addSfxFromLibrary,
+            onDismiss = viewModel::closeSheet,
+            onNavigateLibrary = {
+                viewModel.closeSheet()
+                onNavigateLibrary()
+            },
+        )
+        EditorSheet.MOSAIC -> MosaicEditorSheet(
+            regions = state.timeline.mosaicRegions,
+            isDetecting = state.isDetectingFaces,
+            onAddManual = viewModel::addManualMosaicAtPlayhead,
+            onAddAutoFace = viewModel::addAutoFaceMosaicFromPlayhead,
+            onDelete = viewModel::deleteMosaic,
+            onDismiss = viewModel::closeSheet,
+        )
+        EditorSheet.FIXED_TEMPLATE -> FixedTemplateEditorSheet(
+            timeline = state.timeline,
+            onAdd = viewModel::addFixedTemplate,
+            onUpdateDefault = viewModel::updateFixedTemplateDefault,
+            onUpdateOverride = viewModel::updateFixedTemplateOverride,
+            onToggle = viewModel::toggleFixedTemplate,
+            onDelete = viewModel::deleteFixedTemplate,
+            onDismiss = viewModel::closeSheet,
+        )
+        null -> Unit
+    }
 }
 
 @Composable
@@ -304,11 +408,17 @@ private fun ToolbarRow(
     playheadMs: Long,
     totalOutputMs: Long,
     canDelete: Boolean,
+    hasStickerLibrary: Boolean,
+    hasSfxLibrary: Boolean,
     onTogglePlay: () -> Unit,
     onAddCutRange: () -> Unit,
     onDelete: () -> Unit,
     onAddCaption: () -> Unit,
     onAddTextLayer: () -> Unit,
+    onAddSticker: () -> Unit,
+    onAddSfx: () -> Unit,
+    onOpenMosaic: () -> Unit,
+    onOpenFixedTemplate: () -> Unit,
     onAddVideo: () -> Unit,
 ) {
     Row(
@@ -345,6 +455,23 @@ private fun ToolbarRow(
         FilledTonalButton(onClick = onAddTextLayer) {
             Icon(Icons.Outlined.Add, contentDescription = null)
             Text(" 텍스트", modifier = Modifier.padding(start = 4.dp))
+        }
+        // 짤/효과음 은 라이브러리가 비어있으면 disabled (의미 없을 때 명확히)
+        FilledTonalButton(onClick = onAddSticker, enabled = hasStickerLibrary) {
+            Icon(Icons.Filled.Image, contentDescription = null)
+            Text(" 짤", modifier = Modifier.padding(start = 4.dp))
+        }
+        FilledTonalButton(onClick = onAddSfx, enabled = hasSfxLibrary) {
+            Icon(Icons.Filled.NotificationsActive, contentDescription = null)
+            Text(" 효과음", modifier = Modifier.padding(start = 4.dp))
+        }
+        FilledTonalButton(onClick = onOpenMosaic) {
+            Icon(Icons.Filled.BlurOn, contentDescription = null)
+            Text(" 모자이크", modifier = Modifier.padding(start = 4.dp))
+        }
+        FilledTonalButton(onClick = onOpenFixedTemplate) {
+            Icon(Icons.Filled.PushPin, contentDescription = null)
+            Text(" 고정 템플릿", modifier = Modifier.padding(start = 4.dp))
         }
         FilledTonalButton(onClick = onAddVideo) {
             Icon(Icons.Outlined.Add, contentDescription = null)
