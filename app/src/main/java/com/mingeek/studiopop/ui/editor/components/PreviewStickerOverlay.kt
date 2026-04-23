@@ -1,7 +1,7 @@
 package com.mingeek.studiopop.ui.editor.components
 
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -22,10 +22,13 @@ import java.io.File
 
 /**
  * 프리뷰 위에 짤(ImageLayer) 렌더링.
- * 현재 playhead (source-time 변환 후) 이 layer 시간 범위에 있을 때만 표시.
+ * 현재 playhead (source-time 변환 후) 가 layer 시간 범위에 있을 때만 표시.
  *
- * 드래그: 짤 중심(centerX/Y) 을 NDC (-1..1) 로 조정 — 프레임 내에서 자유 이동.
- * 탭: [onSelect] 호출 → 바깥에서 선택 상태 관리.
+ * 제스처: [detectTransformGestures] 로 드래그 + 핀치(크기) + 회전 동시 처리.
+ * - 한 손가락 드래그 → centerX/Y 이동
+ * - 두 손가락 pinch → scale
+ * - 두 손가락 회전 → rotationDeg
+ * 탭/드래그 시작 시 자동 선택.
  */
 @Composable
 fun PreviewStickerOverlay(
@@ -33,7 +36,13 @@ fun PreviewStickerOverlay(
     currentOutputMs: Long,
     selectedId: String?,
     onSelect: (String) -> Unit,
-    onMove: (id: String, centerX: Float, centerY: Float) -> Unit,
+    onTransform: (
+        id: String,
+        newCenterX: Float,
+        newCenterY: Float,
+        zoomDelta: Float,
+        rotationDelta: Float,
+    ) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val active = remember(timeline, currentOutputMs) {
@@ -49,12 +58,12 @@ fun PreviewStickerOverlay(
         val heightPx = with(density) { maxHeight.toPx() }
 
         active.forEach { layer ->
-            // NDC (-1..1) 에서 -1=좌/하, +1=우/상. Compose 좌표는 y-down 이라 변환 필요.
             val sizeDp = with(density) {
                 (layer.scale.coerceIn(0.05f, 1f) * widthPx).toDp()
             }
-            val offsetXPx = (layer.centerX + 1f) / 2f * widthPx - with(density) { sizeDp.toPx() / 2f }
-            val offsetYPx = (1f - layer.centerY) / 2f * heightPx - with(density) { sizeDp.toPx() / 2f }
+            val sizePx = with(density) { sizeDp.toPx() }
+            val offsetXPx = (layer.centerX + 1f) / 2f * widthPx - sizePx / 2f
+            val offsetYPx = (1f - layer.centerY) / 2f * heightPx - sizePx / 2f
 
             AsyncImage(
                 model = File(layer.imageUri.path ?: ""),
@@ -73,15 +82,14 @@ fun PreviewStickerOverlay(
                         } else Modifier
                     )
                     .pointerInput(layer.id, widthPx, heightPx) {
-                        detectDragGestures(
-                            onDragStart = { onSelect(layer.id) },
-                        ) { change, drag ->
-                            change.consume()
-                            if (widthPx <= 0f || heightPx <= 0f) return@detectDragGestures
-                            // Compose y-down delta → NDC y-up delta
-                            val newX = (layer.centerX + drag.x * 2f / widthPx).coerceIn(-1f, 1f)
-                            val newY = (layer.centerY - drag.y * 2f / heightPx).coerceIn(-1f, 1f)
-                            onMove(layer.id, newX, newY)
+                        detectTransformGestures { _, pan, zoom, rotation ->
+                            if (widthPx <= 0f || heightPx <= 0f) return@detectTransformGestures
+                            onSelect(layer.id)
+                            // 제스처 시작 시점의 layer 가 아니라 "현재 상태" 에서 누적 업데이트.
+                            // layer 는 composable 스냅샷이라 같은 제스처 동안 오래된 값일 수 있어 pan 은 delta 로만 적용.
+                            val newX = (layer.centerX + pan.x * 2f / widthPx).coerceIn(-1f, 1f)
+                            val newY = (layer.centerY - pan.y * 2f / heightPx).coerceIn(-1f, 1f)
+                            onTransform(layer.id, newX, newY, zoom, rotation)
                         }
                     },
             )

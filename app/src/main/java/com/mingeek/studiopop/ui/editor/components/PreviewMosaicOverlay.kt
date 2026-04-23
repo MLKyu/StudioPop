@@ -3,14 +3,17 @@ package com.mingeek.studiopop.ui.editor.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -22,8 +25,12 @@ import com.mingeek.studiopop.data.editor.Timeline
 
 /**
  * 프리뷰 위에 모자이크 영역 박스 렌더링.
- * - MANUAL: 드래그 가능한 회색 반투명 박스
+ * - MANUAL: 박스 드래그(이동) + 선택 상태에선 4 모서리 핸들(크기 조정)
  * - AUTO_FACE: 현재 시각 보간 rect 표시 (편집 불가, 시각 확인용)
+ *
+ * 크기 조정 규칙:
+ * - 각 corner 는 opposite corner 를 고정점으로 잡고 드래그에 따라 rect 확장/축소
+ * - 최소 크기 [MIN_SIZE_NDC] 보장, 프레임 안 [-1, 1] 로 clamp
  */
 @Composable
 fun PreviewMosaicOverlay(
@@ -31,7 +38,7 @@ fun PreviewMosaicOverlay(
     currentOutputMs: Long,
     selectedId: String?,
     onSelect: (String) -> Unit,
-    onManualMove: (id: String, cx: Float, cy: Float) -> Unit,
+    onManualRectChange: (id: String, cx: Float, cy: Float, w: Float, h: Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val activeWithKf = remember(timeline, currentOutputMs) {
@@ -52,15 +59,15 @@ fun PreviewMosaicOverlay(
         val heightPx = with(density) { maxHeight.toPx() }
 
         activeWithKf.forEach { (region, kf) ->
-            // NDC(-1..1) → Compose offset(px)
             val wPx = (kf.w * widthPx).coerceAtLeast(20f)
             val hPx = (kf.h * heightPx).coerceAtLeast(20f)
             val leftPx = (kf.cx + 1f) / 2f * widthPx - wPx / 2f
             val topPx = (1f - kf.cy) / 2f * heightPx - hPx / 2f
-
-            val border = if (region.id == selectedId) Color(0xFF4FC3F7) else Color.White
+            val isSelected = region.id == selectedId
             val manual = region.mode == MosaicMode.MANUAL
+            val border = if (isSelected) Color(0xFF4FC3F7) else Color.White
 
+            // 박스 본체
             Box(
                 modifier = Modifier
                     .offset(
@@ -74,7 +81,7 @@ fun PreviewMosaicOverlay(
                     .background(Color(0xFF9E9E9E).copy(alpha = 0.55f))
                     .border(2.dp, border)
                     .then(
-                        if (manual) Modifier.pointerInput(region.id, widthPx, heightPx) {
+                        if (manual) Modifier.pointerInput(region.id, widthPx, heightPx, kf) {
                             detectDragGestures(
                                 onDragStart = { onSelect(region.id) },
                             ) { change, drag ->
@@ -82,13 +89,100 @@ fun PreviewMosaicOverlay(
                                 if (widthPx <= 0f || heightPx <= 0f) return@detectDragGestures
                                 val newCx = (kf.cx + drag.x * 2f / widthPx).coerceIn(-1f, 1f)
                                 val newCy = (kf.cy - drag.y * 2f / heightPx).coerceIn(-1f, 1f)
-                                onManualMove(region.id, newCx, newCy)
+                                onManualRectChange(region.id, newCx, newCy, kf.w, kf.h)
                             }
                         } else Modifier,
                     ),
             )
+
+            // 리사이즈 핸들 (MANUAL + 선택 상태에서만)
+            if (manual && isSelected) {
+                // 4 corner 위치 (프레임 좌표)
+                val corners = listOf(
+                    Corner.TopLeft to (leftPx to topPx),
+                    Corner.TopRight to (leftPx + wPx to topPx),
+                    Corner.BottomLeft to (leftPx to topPx + hPx),
+                    Corner.BottomRight to (leftPx + wPx to topPx + hPx),
+                )
+                corners.forEach { (corner, pos) ->
+                    val (px, py) = pos
+                    val handleSizeDp = HANDLE_SIZE_DP.dp
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = with(density) { (px - HANDLE_SIZE_DP.dp.toPx() / 2f).toDp() },
+                                y = with(density) { (py - HANDLE_SIZE_DP.dp.toPx() / 2f).toDp() },
+                            )
+                            .size(handleSizeDp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF4FC3F7))
+                            .border(2.dp, Color.White, CircleShape)
+                            .pointerInput(region.id, corner, widthPx, heightPx, kf) {
+                                detectDragGestures { change, drag ->
+                                    change.consume()
+                                    if (widthPx <= 0f || heightPx <= 0f) return@detectDragGestures
+                                    val dNdcX = drag.x * 2f / widthPx
+                                    val dNdcY = -drag.y * 2f / heightPx
+                                    val resized = resizeRect(kf, corner, dNdcX, dNdcY)
+                                    onManualRectChange(
+                                        region.id,
+                                        resized.cx,
+                                        resized.cy,
+                                        resized.w,
+                                        resized.h,
+                                    )
+                                }
+                            },
+                    )
+                }
+            }
         }
     }
+}
+
+private enum class Corner { TopLeft, TopRight, BottomLeft, BottomRight }
+
+private data class Rect(val cx: Float, val cy: Float, val w: Float, val h: Float)
+
+/**
+ * 지정 corner 를 dNdc 만큼 이동. 반대편 corner 는 고정점으로 잡고, 중심과 크기를 재계산.
+ * NDC 좌표계: x=-1..1 (좌→우), y=-1..1 (하→상).
+ */
+private fun resizeRect(kf: MosaicKeyframe, corner: Corner, dNdcX: Float, dNdcY: Float): Rect {
+    val halfW = kf.w / 2f
+    val halfH = kf.h / 2f
+
+    // 현재 corner 들의 NDC 좌표
+    var left = kf.cx - halfW
+    var right = kf.cx + halfW
+    // NDC y: 위(+1)쪽이 top
+    var top = kf.cy + halfH
+    var bottom = kf.cy - halfH
+
+    when (corner) {
+        Corner.TopLeft -> {
+            left = (left + dNdcX).coerceIn(-1f, right - MIN_SIZE_NDC)
+            top = (top + dNdcY).coerceIn(bottom + MIN_SIZE_NDC, 1f)
+        }
+        Corner.TopRight -> {
+            right = (right + dNdcX).coerceIn(left + MIN_SIZE_NDC, 1f)
+            top = (top + dNdcY).coerceIn(bottom + MIN_SIZE_NDC, 1f)
+        }
+        Corner.BottomLeft -> {
+            left = (left + dNdcX).coerceIn(-1f, right - MIN_SIZE_NDC)
+            bottom = (bottom + dNdcY).coerceIn(-1f, top - MIN_SIZE_NDC)
+        }
+        Corner.BottomRight -> {
+            right = (right + dNdcX).coerceIn(left + MIN_SIZE_NDC, 1f)
+            bottom = (bottom + dNdcY).coerceIn(-1f, top - MIN_SIZE_NDC)
+        }
+    }
+
+    val newW = right - left
+    val newH = top - bottom
+    val newCx = (left + right) / 2f
+    val newCy = (top + bottom) / 2f
+    return Rect(newCx, newCy, newW, newH)
 }
 
 private fun interpolate(region: MosaicRegion, sourceMs: Long): MosaicKeyframe? {
@@ -114,3 +208,6 @@ private fun interpolate(region: MosaicRegion, sourceMs: Long): MosaicKeyframe? {
     }
     return kfs.last()
 }
+
+private const val HANDLE_SIZE_DP = 20
+private const val MIN_SIZE_NDC = 0.1f
