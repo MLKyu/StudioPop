@@ -43,6 +43,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.mingeek.studiopop.data.editor.ImageLayer
+import com.mingeek.studiopop.data.editor.MosaicRegion
+import com.mingeek.studiopop.data.editor.SfxClip
 import com.mingeek.studiopop.data.editor.TextLayer
 import com.mingeek.studiopop.data.editor.Timeline
 import com.mingeek.studiopop.data.editor.TimelineCaption
@@ -60,17 +63,27 @@ fun TimelineView(
     frameStrips: Map<Uri, Pair<Long, List<Bitmap>>>,
     playheadOutputMs: Long,
     selectedCaptionId: String?,
+    selectedImageLayerId: String? = null,
+    selectedMosaicId: String? = null,
     pxPerMs: Float = DEFAULT_PX_PER_MS,
-    /** 타임라인 높이. null 이면 orientation 에 따라 자동 (세로 140, 가로 200). */
+    /** 타임라인 높이. null 이면 orientation 에 따라 자동 (세로 200, 가로 260). */
     heightDp: Dp? = null,
     onCaptionTap: (String) -> Unit,
     onTextLayerTap: (String) -> Unit,
+    onImageLayerTap: (String) -> Unit = {},
+    onMosaicTap: (String) -> Unit = {},
+    onSfxTap: (String) -> Unit = {},
     onPlayheadDrag: (Long) -> Unit,
     onDividerDrag: (prevSegId: String, nextSegId: String, sourceDeltaMs: Long) -> Unit,
     onCaptionResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
     onTextLayerResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
+    onImageLayerResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit = { _, _, _ -> },
+    onMosaicResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit = { _, _, _ -> },
     onCaptionTranslate: (id: String, deltaMs: Long) -> Unit,
     onTextLayerTranslate: (id: String, deltaMs: Long) -> Unit,
+    onImageLayerTranslate: (id: String, deltaMs: Long) -> Unit = { _, _ -> },
+    onMosaicTranslate: (id: String, deltaMs: Long) -> Unit = { _, _ -> },
+    onSfxTranslate: (id: String, deltaMs: Long) -> Unit = { _, _ -> },
     onCutRangeTap: (String) -> Unit,
     onCutRangeResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
     onCutRangeTranslate: (id: String, deltaMs: Long) -> Unit,
@@ -172,6 +185,67 @@ fun TimelineView(
                         onTap = { onCutRangeTap(cut.id) },
                         onResize = { s, e -> onCutRangeResize(cut.id, s, e) },
                         onTranslate = { d -> onCutRangeTranslate(cut.id, d) },
+                    )
+                }
+            }
+
+            // 5) 짤(ImageLayer) 레인 — 탭 선택, 양끝 핸들 리사이즈, 롱프레스 드래그 이동
+            Box(modifier = Modifier.fillMaxHeight()) {
+                timeline.imageLayers.forEach { img ->
+                    OverlayBar(
+                        id = img.id,
+                        text = "🖼 짤",
+                        sourceStartMs = img.sourceStartMs,
+                        sourceEndMs = img.sourceEndMs,
+                        timeline = timeline,
+                        pxPerMs = pxPerMs,
+                        topDp = STICKER_BAR_TOP_DP.dp,
+                        barColor = Color(0xFF7E57C2).copy(alpha = 0.85f),
+                        isSelected = img.id == selectedImageLayerId,
+                        onTap = { onImageLayerTap(img.id) },
+                        onResize = { s, e -> onImageLayerResize(img.id, s, e) },
+                        onTranslate = { d -> onImageLayerTranslate(img.id, d) },
+                    )
+                }
+            }
+
+            // 6) 모자이크 레인 — 탭 선택, 양끝 핸들로 시간 범위 조정, 롱프레스 드래그 이동
+            Box(modifier = Modifier.fillMaxHeight()) {
+                timeline.mosaicRegions.forEach { region ->
+                    OverlayBar(
+                        id = region.id,
+                        text = "🟦 모자이크",
+                        sourceStartMs = region.sourceStartMs,
+                        sourceEndMs = region.sourceEndMs,
+                        timeline = timeline,
+                        pxPerMs = pxPerMs,
+                        topDp = MOSAIC_BAR_TOP_DP.dp,
+                        barColor = Color(0xFF546E7A).copy(alpha = 0.85f),
+                        isSelected = region.id == selectedMosaicId,
+                        onTap = { onMosaicTap(region.id) },
+                        onResize = { s, e -> onMosaicResize(region.id, s, e) },
+                        onTranslate = { d -> onMosaicTranslate(region.id, d) },
+                    )
+                }
+            }
+
+            // 7) SFX 레인 — 탭/롱프레스 드래그로 시간 이동 (리사이즈는 오디오 길이 고정)
+            Box(modifier = Modifier.fillMaxHeight()) {
+                timeline.sfxClips.forEach { clip ->
+                    OverlayBar(
+                        id = clip.id,
+                        text = "🔔 ${clip.label.ifBlank { "SFX" }}",
+                        sourceStartMs = clip.sourceStartMs,
+                        sourceEndMs = clip.sourceEndMs,
+                        timeline = timeline,
+                        pxPerMs = pxPerMs,
+                        topDp = SFX_BAR_TOP_DP.dp,
+                        barColor = Color(0xFF26A69A).copy(alpha = 0.85f),
+                        isSelected = false,
+                        onTap = { onSfxTap(clip.id) },
+                        // SFX 는 오디오 길이가 고정이라 start/end delta 는 양쪽 모두 적용해 전체 이동
+                        onResize = { s, _ -> onSfxTranslate(clip.id, s) },
+                        onTranslate = { d -> onSfxTranslate(clip.id, d) },
                     )
                 }
             }
@@ -435,15 +509,21 @@ private fun ResizeHandle(
 }
 
 private const val DEFAULT_PX_PER_MS = 0.15f // 1초 = 150px
-/** 세로 모드 기본 높이 (이전 120 에서 썸네일 인식성 위해 확대) */
-private const val TIMELINE_HEIGHT_PORTRAIT_DP = 140
+/**
+ * 세로 모드 기본 높이. 썸네일 + 7개 레인(텍스트/자막/삭제/짤/모자이크/SFX/예비) 수용.
+ * 각 레인 간격은 26dp.
+ */
+private const val TIMELINE_HEIGHT_PORTRAIT_DP = 220
 /** 가로 모드 기본 높이 (vertical 여유 공간 활용) */
-private const val TIMELINE_HEIGHT_LANDSCAPE_DP = 200
+private const val TIMELINE_HEIGHT_LANDSCAPE_DP = 280
 private const val DIVIDER_HIT_WIDTH_DP = 14
 private const val BAR_HEIGHT_DP = 22
 private const val HANDLE_WIDTH_DP = 10
 private const val DONGLE_SIZE_DP = 18            // 플레이헤드 dongle 시각 지름
 private const val DONGLE_TOUCH_DP = 40           // 플레이헤드 dongle 터치 타깃 (WCAG min)
 private const val TEXT_LAYER_BAR_TOP_DP = 4      // 상단 라인
-private const val CAPTION_BAR_TOP_DP = 30        // 중간 라인 (TextLayer 아래)
-private const val CUT_BAR_TOP_DP = 56            // 하단 라인 (Caption 아래) — 삭제 범위
+private const val CAPTION_BAR_TOP_DP = 30        // 자막
+private const val CUT_BAR_TOP_DP = 56            // 삭제 범위
+private const val STICKER_BAR_TOP_DP = 82        // 짤(ImageLayer)
+private const val MOSAIC_BAR_TOP_DP = 108        // 모자이크
+private const val SFX_BAR_TOP_DP = 134           // 효과음

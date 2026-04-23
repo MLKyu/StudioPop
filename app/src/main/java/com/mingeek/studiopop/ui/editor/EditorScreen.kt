@@ -201,33 +201,22 @@ fun EditorScreen(
                         onTextLayerAnchorChange = viewModel::onTextLayerAnchorChange,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    // 짤(이미지 레이어). 드래그로 이동.
+                    // 짤(이미지 레이어). 드래그 이동 + 핀치 크기 + 회전 통합 제스처.
                     PreviewStickerOverlay(
                         timeline = state.timeline,
                         currentOutputMs = state.playheadOutputMs,
                         selectedId = state.selectedImageLayerId,
                         onSelect = viewModel::selectImageLayer,
-                        onMove = { id, x, y ->
-                            state.timeline.imageLayers.firstOrNull { it.id == id }?.let {
-                                viewModel.updateImageLayer(it.copy(centerX = x, centerY = y))
-                            }
-                        },
+                        onTransform = viewModel::transformImageLayer,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    // 모자이크 박스. MANUAL 이면 드래그로 이동.
+                    // 모자이크 박스. MANUAL + 선택 시 4 모서리 핸들로 크기 조정.
                     PreviewMosaicOverlay(
                         timeline = state.timeline,
                         currentOutputMs = state.playheadOutputMs,
                         selectedId = state.selectedMosaicId,
                         onSelect = viewModel::selectMosaic,
-                        onManualMove = { id, cx, cy ->
-                            // w,h 는 현재 유지 → 기존 keyframe 에서 읽기
-                            val region = state.timeline.mosaicRegions.firstOrNull { it.id == id }
-                            val kf = region?.keyframes?.firstOrNull()
-                            if (kf != null) {
-                                viewModel.updateManualMosaicRect(id, cx, cy, kf.w, kf.h)
-                            }
-                        },
+                        onManualRectChange = viewModel::updateManualMosaicRect,
                         modifier = Modifier.fillMaxSize(),
                     )
                     // 고정 텍스트 템플릿 (세그먼트별 override 자동 반영).
@@ -281,14 +270,24 @@ fun EditorScreen(
                         frameStrips = state.frameStrips,
                         playheadOutputMs = state.playheadOutputMs,
                         selectedCaptionId = state.editingItem?.id,
+                        selectedImageLayerId = state.selectedImageLayerId,
+                        selectedMosaicId = state.selectedMosaicId,
                         onCaptionTap = viewModel::openCaptionEditorFor,
                         onTextLayerTap = viewModel::openTextLayerEditorFor,
+                        onImageLayerTap = viewModel::selectImageLayer,
+                        onMosaicTap = viewModel::selectMosaic,
+                        onSfxTap = { /* tap 은 no-op; 시간 이동은 롱프레스 드래그로 */ },
                         onPlayheadDrag = viewModel::onPlayheadDragged,
                         onDividerDrag = viewModel::onDividerDrag,
                         onCaptionResize = viewModel::onCaptionResize,
                         onTextLayerResize = viewModel::onTextLayerResize,
+                        onImageLayerResize = viewModel::onImageLayerResize,
+                        onMosaicResize = viewModel::onMosaicResize,
                         onCaptionTranslate = viewModel::onCaptionTranslate,
                         onTextLayerTranslate = viewModel::onTextLayerTranslate,
+                        onImageLayerTranslate = viewModel::onImageLayerTranslate,
+                        onMosaicTranslate = viewModel::onMosaicTranslate,
+                        onSfxTranslate = viewModel::onSfxTranslate,
                         onCutRangeTap = viewModel::deleteCutRange,
                         onCutRangeResize = viewModel::onCutRangeResize,
                         onCutRangeTranslate = viewModel::onCutRangeTranslate,

@@ -585,6 +585,31 @@ class EditorViewModel(
         _uiState.update { it.copy(timeline = it.timeline.updateImageLayer(layer)) }
     }
 
+    /**
+     * 프리뷰 제스처(드래그 + 핀치 + 회전) 통합 업데이트.
+     * pan/zoom/rotation 을 각각 delta 형태로 받아 scale·rotation 누적, centerX/Y 는 새 절대값.
+     */
+    fun transformImageLayer(
+        id: String,
+        newCenterX: Float,
+        newCenterY: Float,
+        zoomDelta: Float,
+        rotationDelta: Float,
+    ) {
+        _uiState.update { state ->
+            val layer = state.timeline.imageLayers.firstOrNull { it.id == id } ?: return@update state
+            val newScale = (layer.scale * zoomDelta).coerceIn(0.05f, 1f)
+            state.copy(timeline = state.timeline.updateImageLayer(
+                layer.copy(
+                    centerX = newCenterX.coerceIn(-1f, 1f),
+                    centerY = newCenterY.coerceIn(-1f, 1f),
+                    scale = newScale,
+                    rotationDeg = layer.rotationDeg + rotationDelta,
+                )
+            ))
+        }
+    }
+
     fun deleteImageLayer(id: String) {
         _uiState.update {
             it.copy(
