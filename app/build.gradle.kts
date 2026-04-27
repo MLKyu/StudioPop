@@ -61,32 +61,41 @@ android {
     }
 }
 
-// 빌드 APK 파일명 커스터마이즈: "StudioPop-v<versionName>-<buildType>.apk"
-// AGP 9 에서 VariantOutput.outputFileName 이 제거돼 직접 이름 변경 불가 — assemble 태스크 이후
-// 원본(app-<buildType>.apk) 을 사용자 친화적 이름으로 복사. 원본도 그대로 남아 Gradle 출력 추적 호환.
-androidComponents {
-    onVariants { variant ->
+// 외부 배포용 (서명된 APK/AAB) 파일명을 StudioPop-v<versionName>-release.<ext> 로 변경.
+// AGP 9 에서 VariantOutput.outputFileName 이 제거돼 build 시 파일명 직접 변경 불가.
+// Build → Generate Signed Bundle / APK 위저드는 서명된 결과를 app/release/ 에 복사하는데
+// 이 복사 단계는 Android Studio 의 후처리라 Gradle 훅으로 자동 트리거 안 됨.
+// → 위저드 끝낸 뒤 한 번:
+//   ./gradlew :app:renameSignedRelease
+// 일반 assembleRelease 는 외부 배포용 아니라 rename 안 함 (build/outputs/apk/release/ 그대로).
+tasks.register("renameSignedRelease") {
+    group = "distribution"
+    description = "Build → Generate Signed Bundle / APK 위저드가 app/release/ 에 출력한 결과를 " +
+        "StudioPop-v<versionName>-release.<ext> 로 변경"
+    doLast {
         val appName = "StudioPop"
-        afterEvaluate {
-            val capitalized = variant.name.replaceFirstChar { it.uppercase() }
-            tasks.findByName("assemble$capitalized")?.doLast {
-                val version = variant.outputs.firstOrNull()?.versionName?.orNull ?: "dev"
-                val outputDir = layout.buildDirectory
-                    .dir("outputs/apk/${variant.name}").get().asFile
-                // 서명 유무에 따라 원본 이름이 app-release.apk 또는 app-release-unsigned.apk 로 갈림.
-                // 프리픽스 + .apk 로 매칭해 모든 케이스 커버.
-                val source = outputDir.listFiles()
-                    ?.firstOrNull {
-                        it.name.startsWith("app-${variant.name}") &&
-                                it.name.endsWith(".apk") &&
-                                !it.name.startsWith(appName)
-                    }
-                if (source != null) {
-                    val target = outputDir.resolve(
-                        "$appName-v$version-${variant.buildType}.apk"
-                    )
-                    source.copyTo(target, overwrite = true)
-                }
+        val versionName = android.defaultConfig.versionName ?: "dev"
+        val releaseDir = file("release")
+        if (!releaseDir.exists()) {
+            logger.lifecycle("app/release/ 가 없음. 위저드를 먼저 실행하세요.")
+            return@doLast
+        }
+        val targets = releaseDir.listFiles()
+            ?.filter {
+                it.isFile && (it.name == "app-release.apk" || it.name == "app-release.aab")
+            }
+            ?: emptyList()
+        if (targets.isEmpty()) {
+            logger.lifecycle("app/release/ 에 app-release.apk 또는 .aab 가 없음 — 이미 rename 됐거나 " +
+                "위저드 결과가 다른 곳에 있어요.")
+            return@doLast
+        }
+        for (source in targets) {
+            val target = releaseDir.resolve("$appName-v$versionName-release.${source.extension}")
+            if (source.renameTo(target)) {
+                logger.lifecycle("✓ ${source.name} → ${target.name}")
+            } else {
+                logger.warn("✗ rename 실패: ${source.name}")
             }
         }
     }
