@@ -10,7 +10,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -96,10 +100,30 @@ fun TimelineView(
     ) TIMELINE_HEIGHT_LANDSCAPE_DP.dp else TIMELINE_HEIGHT_PORTRAIT_DP.dp
     val totalWidthDp: Dp = with(density) { (timeline.outputDurationMs * pxPerMs).toDp() }
 
+    // DeX/마우스 사용자를 위해 세로 휠 스크롤을 가로로 매핑. 터치 환경에서는 영향 없음.
+    val scrollState = androidx.compose.foundation.rememberScrollState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
     Box(
         modifier = modifier
             .height(resolvedHeight)
-            .horizontalScroll(rememberScrollState()),
+            .horizontalScroll(scrollState)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type == PointerEventType.Scroll) {
+                            val dy = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                            if (dy != 0f) {
+                                scope.launch {
+                                    scrollState.scrollBy(dy * WHEEL_SCROLL_FACTOR)
+                                }
+                                event.changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                }
+            },
     ) {
         Box(modifier = Modifier.width(totalWidthDp).fillMaxHeight()) {
             // 참고: 빈 타임라인 영역 탭은 아무 동작 안 함. 플레이헤드 이동은 오직
@@ -527,3 +551,5 @@ private const val CUT_BAR_TOP_DP = 56            // 삭제 범위
 private const val STICKER_BAR_TOP_DP = 82        // 짤(ImageLayer)
 private const val MOSAIC_BAR_TOP_DP = 108        // 모자이크
 private const val SFX_BAR_TOP_DP = 134           // 효과음
+/** 마우스 휠 1 노치당 가로 스크롤 픽셀 배수. 너무 작으면 한참 돌려야 하고 너무 크면 급이동. */
+private const val WHEEL_SCROLL_FACTOR = 60f

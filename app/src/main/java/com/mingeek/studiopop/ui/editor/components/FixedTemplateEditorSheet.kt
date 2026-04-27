@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -20,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -29,16 +32,21 @@ import androidx.compose.ui.unit.dp
 import com.mingeek.studiopop.data.editor.FixedTextTemplate
 import com.mingeek.studiopop.data.editor.TemplateAnchor
 import com.mingeek.studiopop.data.editor.Timeline
+import com.mingeek.studiopop.data.library.FixedTemplatePresetEntity
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FixedTemplateEditorSheet(
     timeline: Timeline,
+    presets: List<FixedTemplatePresetEntity>,
     onAdd: (TemplateAnchor, defaultText: String) -> Unit,
     onUpdateDefault: (id: String, String) -> Unit,
     onUpdateOverride: (id: String, segmentId: String, text: String) -> Unit,
     onToggle: (id: String) -> Unit,
     onDelete: (id: String) -> Unit,
+    onSaveAsPreset: (id: String) -> Unit,
+    onAddFromPreset: (FixedTemplatePresetEntity) -> Unit,
+    onDeletePreset: (FixedTemplatePresetEntity) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -59,12 +67,27 @@ fun FixedTemplateEditorSheet(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "로고/채널핸들/워터마크처럼 위치·스타일은 고정하고 텍스트만 세그먼트별로 다르게 넣을 수 있어요.",
+                "로고/채널핸들/워터마크처럼 위치·스타일은 고정하고 텍스트만 세그먼트별로 다르게 넣을 수 있어요. " +
+                    "자주 쓰는 템플릿은 🔖 저장해서 다른 영상에서도 불러 쓸 수 있습니다.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            Text("위치 선택해 템플릿 추가", style = MaterialTheme.typography.labelLarge)
+            if (presets.isNotEmpty()) {
+                Text(
+                    "내 템플릿 프리셋 ${presets.size} — 탭하면 현재 영상에 추가",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                presets.forEach { preset ->
+                    PresetRow(
+                        preset = preset,
+                        onUse = { onAddFromPreset(preset) },
+                        onRemove = { onDeletePreset(preset) },
+                    )
+                }
+            }
+
+            Text("위치 선택해 새 템플릿 추가", style = MaterialTheme.typography.labelLarge)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -86,7 +109,7 @@ fun FixedTemplateEditorSheet(
 
             if (timeline.fixedTemplates.isNotEmpty()) {
                 Text(
-                    "적용된 템플릿 ${timeline.fixedTemplates.size}",
+                    "이 영상에 적용된 템플릿 ${timeline.fixedTemplates.size}",
                     style = MaterialTheme.typography.labelLarge,
                 )
                 timeline.fixedTemplates.forEach { template ->
@@ -97,8 +120,44 @@ fun FixedTemplateEditorSheet(
                         onUpdateOverride = { segId, text -> onUpdateOverride(template.id, segId, text) },
                         onToggle = { onToggle(template.id) },
                         onDelete = { onDelete(template.id) },
+                        onSaveAsPreset = { onSaveAsPreset(template.id) },
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetRow(
+    preset: FixedTemplatePresetEntity,
+    onUse: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onUse() },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Bookmark,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                Text(preset.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    "${anchorLabelOf(preset.anchorName)} · \"${preset.defaultText.ifBlank { "(빈 기본값)" }}\"",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Filled.Delete, contentDescription = "프리셋 삭제")
             }
         }
     }
@@ -112,6 +171,7 @@ private fun TemplateCard(
     onUpdateOverride: (segmentId: String, text: String) -> Unit,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
+    onSaveAsPreset: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -128,6 +188,10 @@ private fun TemplateCard(
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f),
                 )
+                TextButton(onClick = onSaveAsPreset) {
+                    Icon(Icons.Filled.BookmarkBorder, contentDescription = null)
+                    Text(" 프리셋 저장", modifier = Modifier.padding(start = 4.dp))
+                }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Filled.Delete, contentDescription = "삭제")
                 }
@@ -159,4 +223,14 @@ private fun TemplateCard(
             }
         }
     }
+}
+
+private fun anchorLabelOf(name: String): String = when (name) {
+    "TOP_LEFT" -> "좌상단"
+    "TOP_CENTER" -> "상단"
+    "TOP_RIGHT" -> "우상단"
+    "BOTTOM_LEFT" -> "좌하단"
+    "BOTTOM_CENTER" -> "하단"
+    "BOTTOM_RIGHT" -> "우하단"
+    else -> name
 }

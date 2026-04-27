@@ -181,6 +181,13 @@ data class Timeline(
     val cutRanges: List<CutRange> = emptyList(),
     val transitions: TransitionSettings = TransitionSettings(),
     val audioTrack: AudioTrack? = null,
+    /** 원본 영상 오디오 볼륨 배율 (0.0 = 음소거, 1.0 = 원본, 1.5 = 150%). */
+    val originalVolume: Float = 1f,
+    /**
+     * 실험적: 스테레오 원본 오디오에서 center 채널만 추출해 배경 음악을 줄임.
+     * 원본이 모노거나 음악이 center 에 있으면 효과 없음. Phase 3 ML 분리가 들어오면 보조 역할.
+     */
+    val extractCenterChannel: Boolean = false,
 ) {
 
     /**
@@ -388,6 +395,12 @@ data class Timeline(
 
     fun withTransitions(t: TransitionSettings): Timeline = copy(transitions = t)
     fun withAudioTrack(a: AudioTrack?): Timeline = copy(audioTrack = a)
+    fun withOriginalVolume(v: Float): Timeline =
+        copy(originalVolume = v.coerceIn(0f, 4f))
+    fun withBgmVolume(v: Float): Timeline =
+        copy(audioTrack = audioTrack?.copy(volume = v.coerceIn(0f, 4f)))
+    fun withExtractCenterChannel(enabled: Boolean): Timeline =
+        copy(extractCenterChannel = enabled)
 
     /**
      * 원본 영상 전체를 한 세그먼트로 담은 초기 타임라인.
@@ -445,6 +458,13 @@ data class TransitionSettings(
 data class AudioTrack(
     val uri: android.net.Uri,
     val replaceOriginal: Boolean = true,
+    /** BGM 볼륨 배율 (0.0 = 음소거). 원본 오디오와 믹스될 때 레벨 조절. */
+    val volume: Float = 1f,
+    /**
+     * 이 트랙이 보컬 분리 결과인지 여부. true 면 UI 가 "추출된 사람 소리" 로 라벨링하고
+     * replaceOriginal 토글 숨김 등 전용 동작. 경로 기반 휴리스틱보다 안전한 명시적 플래그.
+     */
+    val isVocalExtraction: Boolean = false,
 )
 
 /**

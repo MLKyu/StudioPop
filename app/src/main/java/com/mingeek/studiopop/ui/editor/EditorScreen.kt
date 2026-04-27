@@ -10,13 +10,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -26,10 +28,12 @@ import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RemoveCircle
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Subtitles
@@ -56,6 +60,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -63,7 +76,9 @@ import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.data.editor.TransitionKind
 import com.mingeek.studiopop.data.library.LibraryAssetKind
 import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
+import com.mingeek.studiopop.ui.editor.components.AudioMixSheet
 import com.mingeek.studiopop.ui.editor.components.CaptionEditorSheet
+import com.mingeek.studiopop.ui.editor.components.ExportedVideoPickerSheet
 import com.mingeek.studiopop.ui.editor.components.FixedTemplateEditorSheet
 import com.mingeek.studiopop.ui.editor.components.LibraryPickerSheet
 import com.mingeek.studiopop.ui.editor.components.MosaicEditorSheet
@@ -103,7 +118,61 @@ fun EditorScreen(
     // 프리뷰 빈 영역 탭 → TopAppBar 숨김/노출 토글. 편집 중 더 많은 화면 공간 확보용.
     var toolbarVisible by remember { mutableStateOf(true) }
 
+    // DeX 키보드 shortcut — 편집기 진입 시 focus 잡아 Space/Arrow/Ctrl+E/Esc/Delete 처리.
+    val keyFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { keyFocus.requestFocus() } }
+    val keyboardModifier = Modifier
+        .focusRequester(keyFocus)
+        .focusable()
+        .onKeyEvent { keyEvent ->
+            if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
+            // 시트·편집기 열려 있을 때는 TextField 타이핑 보호. Esc 만 닫기 용도로 통과.
+            val sheetOpen = state.activeSheet != null || state.editingItem != null
+            if (sheetOpen && keyEvent.key != Key.Escape) return@onKeyEvent false
+            when {
+                keyEvent.key == Key.Escape -> {
+                    when {
+                        state.editingItem != null -> { viewModel.closeEditor(); true }
+                        state.activeSheet != null -> { viewModel.closeSheet(); true }
+                        else -> false
+                    }
+                }
+                keyEvent.key == Key.Spacebar -> {
+                    if (state.hasVideo) viewModel.togglePlay()
+                    true
+                }
+                keyEvent.key == Key.DirectionLeft -> {
+                    val new = (state.playheadOutputMs - SEEK_STEP_MS).coerceAtLeast(0L)
+                    viewModel.onPlayheadDragged(new)
+                    true
+                }
+                keyEvent.key == Key.DirectionRight -> {
+                    val new = (state.playheadOutputMs + SEEK_STEP_MS)
+                        .coerceAtMost(state.timeline.outputDurationMs)
+                    viewModel.onPlayheadDragged(new)
+                    true
+                }
+                keyEvent.key == Key.E && keyEvent.isCtrlPressed -> {
+                    if (state.canExport) viewModel.startExport()
+                    true
+                }
+                keyEvent.key == Key.Delete || keyEvent.key == Key.Backspace -> {
+                    when {
+                        state.selectedImageLayerId != null -> {
+                            viewModel.deleteImageLayer(state.selectedImageLayerId!!); true
+                        }
+                        state.selectedMosaicId != null -> {
+                            viewModel.deleteMosaic(state.selectedMosaicId!!); true
+                        }
+                        else -> false
+                    }
+                }
+                else -> false
+            }
+        }
+
     Scaffold(
+        modifier = keyboardModifier,
         topBar = {
             AnimatedVisibility(
                 visible = toolbarVisible,
@@ -138,6 +207,11 @@ fun EditorScreen(
                 contract = ActivityResultContracts.PickVisualMedia()
             ) { uri -> viewModel.addVideoToTimeline(uri) }
 
+            // 다중 선택 launcher — 여러 영상 한 번에 append.
+            val addMultipleVideosLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_APPEND_VIDEOS),
+            ) { uris -> viewModel.addVideosToTimeline(uris) }
+
             if (state.hasProject &&
                 (state.latestExportVideoPath != null || state.latestSrtPath != null)
             ) {
@@ -161,72 +235,116 @@ fun EditorScreen(
                 )
             } else {
                 val toolbarToggleSource = remember { MutableInteractionSource() }
-                Box(
+                // 프리뷰 박스 비율 우선순위:
+                //   1) ExoPlayer 가 디코더에서 인식한 runtime VideoSize (회전·PAR 반영, ground truth)
+                //   2) MediaMetadataRetriever 메타데이터 (content:// 권한 등으로 실패 가능)
+                //   3) 16:9 fallback (영상 막 로딩 직후 잠깐만)
+                // 이 박스 안에 영상 비율을 만족하는 가장 큰 직사각형을 가운데 정렬 — letterbox 영역은
+                // Scaffold 배경(검정) 으로 자연스럽게. 자막/짤/모자이크 NDC 좌표는 이 박스 = 실제 영상
+                // 영역과 1:1 매칭되어 검은 띠로 새 나가지 않음.
+                // remember 의 key 를 URI 로 두면 새 영상마다 MutableState 인스턴스가 교체되는데,
+                // PreviewPlayer 내부 DisposableEffect 의 listener 는 한 번만 캡쳐돼 옛 인스턴스를
+                // 계속 잡고 있어 새 영상의 aspect 가 반영 안 되는 버그가 발생. → MutableState 는
+                // 한 번만 만들고, URI 가 바뀌면 LaunchedEffect 로 value 만 null 로 초기화.
+                val runtimeAspectState = remember { mutableStateOf<Float?>(null) }
+                val firstSegUri = state.timeline.segments.firstOrNull()?.sourceUri
+                LaunchedEffect(firstSegUri) { runtimeAspectState.value = null }
+                val previewAspect = runtimeAspectState.value
+                    ?: state.previewAspectRatio ?: (16f / 9f)
+                val config = androidx.compose.ui.platform.LocalConfiguration.current
+                // orientation 필드가 일부 단말/DeX 에서 정확하지 않을 수 있어 폭/높이 직접 비교가 더 안전.
+                val isLandscape = config.screenWidthDp > config.screenHeightDp
+                // 가로: 화면 높이의 85% (top bar/툴바 등 chrome 만 제외하고 거의 다 사용 — 세로 영상이
+                // 잘리지 않도록). 세로: 300dp 정도가 적당 — 그 이상이면 타임라인 영역이 좁아짐.
+                val previewMaxHeight = if (isLandscape) (config.screenHeightDp * 0.85f).dp
+                else 300.dp
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 300.dp)
-                        .aspectRatio(16f / 9f)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        // 빈 영역 탭 → TopAppBar 토글. 자막/텍스트 오버레이는 자기 pointerInput
-                        // 에서 이벤트 먼저 소비하므로 드래그/탭이 여기 내려오지 않아 무해.
-                        .clickable(
-                            interactionSource = toolbarToggleSource,
-                            indication = null,
-                        ) { toolbarVisible = !toolbarVisible },
+                        .heightIn(max = previewMaxHeight)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    PreviewPlayer(
-                        timeline = state.timeline,
-                        onPositionChange = { output ->
-                            if (state.isPlaying) viewModel.onPlayheadChange(output)
-                        },
-                        seekToOutputMs = state.seekRequest,
-                        isPlaying = state.isPlaying,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // 전환 켜져 있으면 경계 근처에서 페이드 오버레이 (export 와 동일 공식).
-                    if (state.timeline.transitions.enabled) {
-                        PreviewTransitionOverlay(
-                            boundariesMs = state.timeline.transitionBoundariesRawOutputMs(),
-                            currentOutputMs = state.playheadOutputMs,
-                            halfDurationMs = state.timeline.transitions.halfDurationMs,
-                            peakAlpha = state.timeline.transitions.peakAlpha,
+                    val cw = maxWidth
+                    // verticalScroll 부모에선 maxHeight 가 Infinity 로 들어올 수 있어 방어.
+                    // value.isFinite() 로 Infinity·NaN 모두 차단.
+                    val ch = if (maxHeight.value.isFinite() && maxHeight > 0.dp) maxHeight
+                    else previewMaxHeight
+                    val containerAspect = cw / ch
+                    val (boxW, boxH) = if (previewAspect >= containerAspect) {
+                        cw to (cw / previewAspect)
+                    } else {
+                        (ch * previewAspect) to ch
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(boxW)
+                            .height(boxH)
+                            .clickable(
+                                interactionSource = toolbarToggleSource,
+                                indication = null,
+                            ) { toolbarVisible = !toolbarVisible },
+                    ) {
+                        PreviewPlayer(
+                            timeline = state.timeline,
+                            onPositionChange = { output ->
+                                if (state.isPlaying) viewModel.onPlayheadChange(output)
+                            },
+                            seekToOutputMs = state.seekRequest,
+                            isPlaying = state.isPlaying,
+                            // 첫 valid runtime aspect 만 채택 — 여러 영상 concat 재생 시 segment
+                            // 전환마다 박스가 흔들리지 않게, 또한 export 의 frame 좌표계(첫 세그먼트
+                            // 해상도) 와 일치하게. URI 가 새로 바뀌면 위 LaunchedEffect 가 null 로
+                            // 리셋해 다음 영상의 첫 size 를 다시 잡음.
+                            onVideoAspectChange = { newRatio ->
+                                if (runtimeAspectState.value == null) {
+                                    runtimeAspectState.value = newRatio
+                                }
+                            },
                             modifier = Modifier.fillMaxSize(),
                         )
-                    }
-                    // 프리뷰 위에 자막/텍스트 레이어 Compose 오버레이. 세로 드래그로 anchorY 조정.
-                    PreviewCaptionOverlay(
-                        timeline = state.timeline,
-                        currentOutputMs = state.playheadOutputMs,
-                        onCaptionAnchorChange = viewModel::onCaptionAnchorChange,
-                        onTextLayerAnchorChange = viewModel::onTextLayerAnchorChange,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // 짤(이미지 레이어). 드래그 이동 + 핀치 크기 + 회전 통합 제스처.
-                    PreviewStickerOverlay(
-                        timeline = state.timeline,
-                        currentOutputMs = state.playheadOutputMs,
-                        selectedId = state.selectedImageLayerId,
-                        onSelect = viewModel::selectImageLayer,
-                        onTransform = viewModel::transformImageLayer,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // 모자이크 박스. MANUAL + 선택 시 4 모서리 핸들로 크기 조정.
-                    PreviewMosaicOverlay(
-                        timeline = state.timeline,
-                        currentOutputMs = state.playheadOutputMs,
-                        selectedId = state.selectedMosaicId,
-                        onSelect = viewModel::selectMosaic,
-                        onManualRectChange = viewModel::updateManualMosaicRect,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // 고정 텍스트 템플릿 (세그먼트별 override 자동 반영).
-                    PreviewFixedTemplateOverlay(
-                        timeline = state.timeline,
-                        currentOutputMs = state.playheadOutputMs,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    if (state.seekRequest != null) {
-                        LaunchedEffect(state.seekRequest) { viewModel.consumeSeekRequest() }
+                        if (state.timeline.transitions.enabled) {
+                            PreviewTransitionOverlay(
+                                boundariesMs = state.timeline.transitionBoundariesRawOutputMs(),
+                                currentOutputMs = state.playheadOutputMs,
+                                halfDurationMs = state.timeline.transitions.halfDurationMs,
+                                peakAlpha = state.timeline.transitions.peakAlpha,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        PreviewCaptionOverlay(
+                            timeline = state.timeline,
+                            currentOutputMs = state.playheadOutputMs,
+                            onCaptionAnchorChange = viewModel::onCaptionAnchorChange,
+                            onTextLayerAnchorChange = viewModel::onTextLayerAnchorChange,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        PreviewStickerOverlay(
+                            timeline = state.timeline,
+                            currentOutputMs = state.playheadOutputMs,
+                            selectedId = state.selectedImageLayerId,
+                            isPlaying = state.isPlaying,
+                            onSelect = viewModel::selectImageLayer,
+                            onTransform = viewModel::transformImageLayer,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        PreviewMosaicOverlay(
+                            timeline = state.timeline,
+                            currentOutputMs = state.playheadOutputMs,
+                            selectedId = state.selectedMosaicId,
+                            isPlaying = state.isPlaying,
+                            onSelect = viewModel::selectMosaic,
+                            onManualRectChange = viewModel::updateManualMosaicRect,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        PreviewFixedTemplateOverlay(
+                            timeline = state.timeline,
+                            currentOutputMs = state.playheadOutputMs,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (state.seekRequest != null) {
+                            LaunchedEffect(state.seekRequest) { viewModel.consumeSeekRequest() }
+                        }
                     }
                 }
 
@@ -244,6 +362,7 @@ fun EditorScreen(
                     canDelete = state.canDelete,
                     hasStickerLibrary = state.stickerLibrary.isNotEmpty(),
                     hasSfxLibrary = state.sfxLibrary.isNotEmpty(),
+                    hasExportedVideos = state.exportedVideoLibrary.isNotEmpty(),
                     onTogglePlay = viewModel::togglePlay,
                     onAddCutRange = viewModel::addCutRangeAtPlayhead,
                     onDelete = viewModel::deleteCurrentSegment,
@@ -253,10 +372,14 @@ fun EditorScreen(
                     onAddSfx = { viewModel.openSheet(EditorSheet.SFX_PICKER) },
                     onOpenMosaic = { viewModel.openSheet(EditorSheet.MOSAIC) },
                     onOpenFixedTemplate = { viewModel.openSheet(EditorSheet.FIXED_TEMPLATE) },
-                    onAddVideo = {
-                        addVideoLauncher.launch(
+                    onOpenAudioMix = { viewModel.openSheet(EditorSheet.AUDIO_MIX) },
+                    onAddMultipleVideos = {
+                        addMultipleVideosLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                         )
+                    },
+                    onOpenExportedVideoPicker = {
+                        viewModel.openSheet(EditorSheet.EXPORTED_VIDEO_PICKER)
                     },
                 )
 
@@ -365,16 +488,43 @@ fun EditorScreen(
         )
         EditorSheet.FIXED_TEMPLATE -> FixedTemplateEditorSheet(
             timeline = state.timeline,
+            presets = state.fixedTemplatePresets,
             onAdd = viewModel::addFixedTemplate,
             onUpdateDefault = viewModel::updateFixedTemplateDefault,
             onUpdateOverride = viewModel::updateFixedTemplateOverride,
             onToggle = viewModel::toggleFixedTemplate,
             onDelete = viewModel::deleteFixedTemplate,
+            onSaveAsPreset = viewModel::saveFixedTemplateAsPreset,
+            onAddFromPreset = viewModel::addFixedTemplateFromPreset,
+            onDeletePreset = viewModel::deleteFixedTemplatePreset,
+            onDismiss = viewModel::closeSheet,
+        )
+        EditorSheet.EXPORTED_VIDEO_PICKER -> ExportedVideoPickerSheet(
+            items = state.exportedVideoLibrary,
+            onConfirm = viewModel::appendExportedVideos,
+            onDismiss = viewModel::closeSheet,
+        )
+        EditorSheet.AUDIO_MIX -> AudioMixSheet(
+            timeline = state.timeline,
+            vocalExtractProgress = state.vocalExtractProgress,
+            vocalModelState = state.vocalModelState,
+            onOriginalVolume = viewModel::setOriginalVolume,
+            onBgmVolume = viewModel::setBgmVolume,
+            onSfxVolume = viewModel::setSfxVolume,
+            onExtractCenterChannel = viewModel::setExtractCenterChannel,
+            onBgmReplaceOriginal = viewModel::setBgmReplaceOriginal,
+            onExtractVocals = viewModel::extractVocalsFromFirstSegment,
             onDismiss = viewModel::closeSheet,
         )
         null -> Unit
     }
 }
+
+/** 갤러리 다중 선택 시 한 번에 고를 수 있는 최대 영상 수. PhotoPicker 상한 고려. */
+private const val MAX_APPEND_VIDEOS = 20
+
+/** 키보드 Arrow seek 한 번당 이동량 (ms). */
+private const val SEEK_STEP_MS = 100L
 
 @Composable
 private fun EmptyVideoPicker(onPick: () -> Unit, onPickSrt: () -> Unit) {
@@ -409,6 +559,7 @@ private fun ToolbarRow(
     canDelete: Boolean,
     hasStickerLibrary: Boolean,
     hasSfxLibrary: Boolean,
+    hasExportedVideos: Boolean,
     onTogglePlay: () -> Unit,
     onAddCutRange: () -> Unit,
     onDelete: () -> Unit,
@@ -418,7 +569,9 @@ private fun ToolbarRow(
     onAddSfx: () -> Unit,
     onOpenMosaic: () -> Unit,
     onOpenFixedTemplate: () -> Unit,
-    onAddVideo: () -> Unit,
+    onOpenAudioMix: () -> Unit,
+    onAddMultipleVideos: () -> Unit,
+    onOpenExportedVideoPicker: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -472,9 +625,20 @@ private fun ToolbarRow(
             Icon(Icons.Filled.PushPin, contentDescription = null)
             Text(" 고정 템플릿", modifier = Modifier.padding(start = 4.dp))
         }
-        FilledTonalButton(onClick = onAddVideo) {
+        FilledTonalButton(onClick = onOpenAudioMix) {
+            Icon(Icons.Filled.Tune, contentDescription = null)
+            Text(" 오디오", modifier = Modifier.padding(start = 4.dp))
+        }
+        FilledTonalButton(onClick = onAddMultipleVideos) {
             Icon(Icons.Outlined.Add, contentDescription = null)
-            Text(" 영상", modifier = Modifier.padding(start = 4.dp))
+            Text(" 영상(여러개)", modifier = Modifier.padding(start = 4.dp))
+        }
+        FilledTonalButton(
+            onClick = onOpenExportedVideoPicker,
+            enabled = hasExportedVideos,
+        ) {
+            Icon(Icons.Filled.Movie, contentDescription = null)
+            Text(" 내 편집본", modifier = Modifier.padding(start = 4.dp))
         }
     }
 }

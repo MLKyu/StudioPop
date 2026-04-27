@@ -14,8 +14,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.mingeek.studiopop.data.editor.Timeline
 import com.mingeek.studiopop.data.editor.TimelineSegment
@@ -36,10 +38,25 @@ fun PreviewPlayer(
     onPositionChange: (Long) -> Unit,
     seekToOutputMs: Long?,
     isPlaying: Boolean,
+    /**
+     * 디코더가 인식한 영상의 화면 표시용 가로세로 비율 (rotation·PAR 반영). 영상 size 가
+     * 결정되거나 다음 세그먼트로 바뀔 때마다 호출. 메타데이터(MediaMetadataRetriever) 가 실패하는
+     * content:// 등 케이스에서도 항상 정확한 값을 받을 수 있어 프리뷰 박스 비율 동기화의 정답값.
+     */
+    onVideoAspectChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+    /**
+     * BGM / 추출된 vocals WAV 등 [Timeline.audioTrack] 을 프리뷰에서 들리게 하는 서브 플레이어.
+     * 메인과 재생·정지 상태만 sync. seek 는 메인만 — BGM 은 자기 페이스로 loop (export 와 유사).
+     */
+    val bgmPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ONE
+        }
+    }
 
     val effectiveSegments = remember(timeline) { timeline.effectiveSegments() }
     val effectiveRawStarts = remember(timeline) { timeline.effectiveRawOutputStarts() }
@@ -50,16 +67,46 @@ fun PreviewPlayer(
         exoPlayer.prepare()
     }
 
-    // 외부 seek 요청 반영 (raw output ms → effective 위치)
-    LaunchedEffect(seekToOutputMs) {
-        seekToOutputMs?.let {
-            exoPlayer.seekToRawOutput(effectiveSegments, effectiveRawStarts, it)
+    // 원본 볼륨 / 대체 여부 → 메인 player.volume. ExoPlayer.volume 은 0..1 로 clamp.
+    // (>1 증폭은 ExoPlayer 단독으론 안 되고 AudioProcessor 체인 커스터마이즈가 필요 — export 는 정확 반영.)
+    val originalReplace = timeline.audioTrack?.replaceOriginal == true
+    LaunchedEffect(timeline.originalVolume, originalReplace) {
+        exoPlayer.volume = if (originalReplace) 0f
+            else timeline.originalVolume.coerceIn(0f, 1f)
+    }
+
+    // BGM / vocal 추출 WAV 소스 교체.
+    val bgmUri = timeline.audioTrack?.uri?.toString()
+    LaunchedEffect(bgmUri) {
+        if (bgmUri != null) {
+            bgmPlayer.setMediaItem(MediaItem.fromUri(bgmUri))
+            bgmPlayer.prepare()
+            bgmPlayer.seekTo(0L)
+        } else {
+            bgmPlayer.stop()
+            bgmPlayer.clearMediaItems()
         }
     }
 
-    // 재생/일시정지
-    LaunchedEffect(isPlaying) {
+    // BGM 볼륨
+    val bgmVolume = timeline.audioTrack?.volume ?: 0f
+    LaunchedEffect(bgmVolume, bgmUri) {
+        bgmPlayer.volume = bgmVolume.coerceIn(0f, 1f)
+    }
+
+    // 외부 seek 요청 반영 (raw output ms → effective 위치). BGM 은 평소 자기 페이스로 loop 하되
+    // "처음으로" 되감기(output=0) 시엔 BGM 도 0 으로 맞춰 export 와 동일한 시작 느낌 제공.
+    LaunchedEffect(seekToOutputMs) {
+        seekToOutputMs?.let {
+            exoPlayer.seekToRawOutput(effectiveSegments, effectiveRawStarts, it)
+            if (it == 0L) bgmPlayer.seekTo(0L)
+        }
+    }
+
+    // 재생/일시정지 — 양쪽 동시 제어. bgm 은 audioTrack 있을 때만 재생.
+    LaunchedEffect(isPlaying, bgmUri) {
         exoPlayer.playWhenReady = isPlaying
+        bgmPlayer.playWhenReady = isPlaying && bgmUri != null
     }
 
     // 현재 위치 폴링 → raw output ms 로 역매핑해 콜백
@@ -71,8 +118,27 @@ fun PreviewPlayer(
         }
     }
 
+    // ExoPlayer 의 라이프사이클 정리: 반드시 단일 DisposableEffect 로 묶어 dispose 순서를 명시.
+    // (LIFO 순서 문제 회피 — removeListener 는 release 이전에 일어나야 안전.)
+    // listener: 디코더가 영상 size 를 인식할 때마다(첫 프레임 직전 + 클립 자동 전환 시) 콜백 호출.
+    // VideoSize 는 회전 반영된 출력 좌표계 W/H 이고 pixelWidthHeightRatio 로 비정사각 픽셀(아나모픽
+    // 등)까지 보정 — 프리뷰 박스 비율의 ground truth.
     DisposableEffect(Unit) {
-        onDispose { exoPlayer.release() }
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width <= 0 || videoSize.height <= 0) return
+                val par = if (videoSize.pixelWidthHeightRatio > 0f)
+                    videoSize.pixelWidthHeightRatio else 1f
+                val ratio = (videoSize.width * par) / videoSize.height.toFloat()
+                if (ratio > 0f && ratio.isFinite()) onVideoAspectChange(ratio)
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+            bgmPlayer.release()
+        }
     }
 
     AndroidView(
@@ -80,9 +146,15 @@ fun PreviewPlayer(
             PlayerView(ctx).apply {
                 player = exoPlayer
                 useController = false
+                // 외곽 Compose Box 가 이미 소스 영상 비율로 그려지므로 surface 는 박스를 꽉 채우면 됨.
+                // FIT 모드는 surface_view 가 다른 크기로 늘어나는 일부 단말 케이스를 막아주는 보험.
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
         },
-        update = { it.player = exoPlayer },
+        update = {
+            it.player = exoPlayer
+            it.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        },
         modifier = modifier,
     )
 }

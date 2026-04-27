@@ -27,6 +27,9 @@ class MosaicBlockOverlay(
     private val region: MosaicRegion,
     private val activeWindowsMs: List<LongRange>,
     private val sourceStartMs: Long,
+    /** 출력 영상 해상도. Media3 `setScale` 은 bitmap native px 기준 배율이라 이 값으로 정확 매핑. */
+    private val frameWidthPx: Int,
+    private val frameHeightPx: Int,
 ) : BitmapOverlay() {
 
     private val bitmap: Bitmap by lazy { buildPatternBitmap(region.blockSizePx) }
@@ -43,15 +46,13 @@ class MosaicBlockOverlay(
             sourceStartMs
         }
         val kf = interpolate(sourceMs)
+        // rect 크기 = kf.w * frameWidth (output px). setScale 은 bitmap native(PATTERN_PX) 대비 배율.
+        // 따라서 scaleX = desired_output_px / PATTERN_PX.
+        val scaleX = kf.w.coerceIn(0f, 1f) * frameWidthPx / PATTERN_PX.toFloat()
+        val scaleY = kf.h.coerceIn(0f, 1f) * frameHeightPx / PATTERN_PX.toFloat()
         return OverlaySettings.Builder()
             .setBackgroundFrameAnchor(kf.cx.coerceIn(-1f, 1f), kf.cy.coerceIn(-1f, 1f))
-            // NDC 기준 w,h (0..2) → FadeOverlay 와 동일하게 큰 scale 로 변환.
-            // 비트맵 네이티브는 [PATTERN_PX] px, 출력 frame 은 런타임 가변이라 정확도는 근사.
-            // 경험적 scale factor: rect 의 NDC 크기(절반폭) × SCALE_FACTOR.
-            .setScale(
-                (kf.w.coerceIn(0f, 2f) * SCALE_FACTOR),
-                (kf.h.coerceIn(0f, 2f) * SCALE_FACTOR),
-            )
+            .setScale(scaleX.coerceAtLeast(0.001f), scaleY.coerceAtLeast(0.001f))
             .setAlphaScale(alpha)
             .build()
     }
@@ -112,13 +113,7 @@ class MosaicBlockOverlay(
     }
 
     companion object {
+        /** 모자이크 패턴 비트맵의 native 해상도. setScale 로 필요한 rect 크기에 맞춰 늘림. */
         private const val PATTERN_PX = 256
-
-        /**
-         * setScale 경험값. 비트맵 native 크기(256px) 를 프레임 NDC w (0..2) 에 맞추기 위한 배수.
-         * 1080p 프레임(약 1920x1080) 기준 1920/256 = 7.5. 9:16 세로 에서도 1080/256 ≈ 4.2 라
-         * 비율별 편차는 있지만 MVP 단계에선 감수.
-         */
-        private const val SCALE_FACTOR = 4f
     }
 }

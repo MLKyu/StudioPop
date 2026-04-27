@@ -57,7 +57,10 @@ fun SfxPreviewPlayer(
         val current = soundIds.value.toMutableMap()
         for (clip in timeline.sfxClips) {
             if (!current.containsKey(clip.id)) {
-                val path = clip.audioUri.path ?: continue
+                // SoundPool.load(path, ...) 는 실제 filesystem path 를 요구. content:// 등 non-file
+                // URI 는 .path 가 허위(URI 내부 path segment)라 load 가 조용히 실패함 → skip.
+                // 라이브러리 SFX 는 모두 filesDir/library/ 파일이라 file:// 스키마만 허용하면 안전.
+                val path = clip.audioUri.takeIf { it.scheme == "file" }?.path ?: continue
                 val id = runCatching { pool.load(path, 1) }.getOrNull() ?: continue
                 current[clip.id] = id
             }
