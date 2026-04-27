@@ -61,41 +61,48 @@ android {
     }
 }
 
-// 외부 배포용 (서명된 APK/AAB) 파일명을 StudioPop-v<versionName>-release.<ext> 로 변경.
-// AGP 9 에서 VariantOutput.outputFileName 이 제거돼 build 시 파일명 직접 변경 불가.
-// Build → Generate Signed Bundle / APK 위저드는 서명된 결과를 app/release/ 에 복사하는데
-// 이 복사 단계는 Android Studio 의 후처리라 Gradle 훅으로 자동 트리거 안 됨.
-// → 위저드 끝낸 뒤 한 번:
-//   ./gradlew :app:renameSignedRelease
-// 일반 assembleRelease 는 외부 배포용 아니라 rename 안 함 (build/outputs/apk/release/ 그대로).
-tasks.register("renameSignedRelease") {
-    group = "distribution"
-    description = "Build → Generate Signed Bundle / APK 위저드가 app/release/ 에 출력한 결과를 " +
-        "StudioPop-v<versionName>-release.<ext> 로 변경"
-    doLast {
-        val appName = "StudioPop"
-        val versionName = android.defaultConfig.versionName ?: "dev"
-        val releaseDir = file("release")
-        if (!releaseDir.exists()) {
-            logger.lifecycle("app/release/ 가 없음. 위저드를 먼저 실행하세요.")
-            return@doLast
-        }
-        val targets = releaseDir.listFiles()
-            ?.filter {
-                it.isFile && (it.name == "app-release.apk" || it.name == "app-release.aab")
-            }
-            ?: emptyList()
-        if (targets.isEmpty()) {
-            logger.lifecycle("app/release/ 에 app-release.apk 또는 .aab 가 없음 — 이미 rename 됐거나 " +
-                "위저드 결과가 다른 곳에 있어요.")
-            return@doLast
-        }
-        for (source in targets) {
-            val target = releaseDir.resolve("$appName-v$versionName-release.${source.extension}")
-            if (source.renameTo(target)) {
-                logger.lifecycle("✓ ${source.name} → ${target.name}")
-            } else {
-                logger.warn("✗ rename 실패: ${source.name}")
+// 외부 배포용 (서명된 APK/AAB) 파일명을 StudioPop-v<versionName>-release.<ext> 로 자동 변경.
+// AGP 9 에서 VariantOutput.outputFileName 이 제거돼 빌드 시 파일명 직접 변경 불가 — assemble/bundle
+// 태스크의 doLast 에서 결과물을 후처리.
+// Build → Generate Signed Bundle / APK 위저드는 결과물을 일반 build 출력(app/build/outputs/...) 이
+// 아닌 app/release/ 에 직접 출력 — 두 경로 모두 스캔해 양쪽 케이스 다 커버.
+// 서명되지 않은 -unsigned 결과물은 외부 배포용 아니므로 rename skip (개발용 깔끔하게 유지).
+androidComponents {
+    onVariants { variant ->
+        if (variant.name != "release") return@onVariants
+        afterEvaluate {
+            listOf("assembleRelease", "bundleRelease").forEach { taskName ->
+                tasks.findByName(taskName)?.doLast {
+                    val appName = "StudioPop"
+                    val versionName = variant.outputs.firstOrNull()?.versionName?.orNull ?: "dev"
+                    val newPrefix = "$appName-v$versionName-release"
+                    val candidates = listOf(
+                        // 일반 signed assembleRelease 출력
+                        layout.buildDirectory.dir("outputs/apk/release").get().asFile,
+                        // 일반 signed bundleRelease 출력
+                        layout.buildDirectory.dir("outputs/bundle/release").get().asFile,
+                        // 위저드(Generate Signed Bundle / APK) 가 직접 사용하는 경로
+                        layout.projectDirectory.dir("release").asFile,
+                    )
+                    for (dir in candidates) {
+                        if (!dir.exists()) continue
+                        val sources = dir.listFiles()?.filter {
+                            it.isFile &&
+                                (it.name == "app-release.apk" || it.name == "app-release.aab")
+                        } ?: continue
+                        for (source in sources) {
+                            val target = dir.resolve("$newPrefix.${source.extension}")
+                            // 윈도우는 target 존재 시 renameTo 가 실패 — 먼저 삭제.
+                            if (target.exists()) target.delete()
+                            if (source.renameTo(target)) {
+                                logger.lifecycle("✓ rename: ${source.name} → ${target.name} " +
+                                    "(${dir.relativeTo(rootDir).path})")
+                            } else {
+                                logger.warn("✗ rename 실패: ${source.absolutePath}")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
