@@ -20,7 +20,12 @@ import com.mingeek.studiopop.data.caption.WhisperCppModelManager
 import com.mingeek.studiopop.data.editor.FaceTracker
 import com.mingeek.studiopop.data.editor.FrameStripGenerator
 import com.mingeek.studiopop.data.editor.VideoEditor
+import com.mingeek.studiopop.data.library.FixedTemplatePresetRepository
 import com.mingeek.studiopop.data.library.LibraryAssetRepository
+import com.mingeek.studiopop.data.library.TimelineSnapshotRepository
+import com.mingeek.studiopop.data.vocal.StereoPcmDecoder
+import com.mingeek.studiopop.data.vocal.UvrModelManager
+import com.mingeek.studiopop.data.vocal.VocalSeparator
 import com.mingeek.studiopop.data.media.AssetBackfillPublisher
 import com.mingeek.studiopop.data.media.MediaStoreSrtPublisher
 import com.mingeek.studiopop.data.media.MediaStoreVideoPublisher
@@ -230,7 +235,22 @@ class AppContainer(context: Context) {
         LibraryAssetRepository(appContext, database.libraryAssetDao())
     }
 
+    val timelineSnapshotRepository: TimelineSnapshotRepository by lazy {
+        TimelineSnapshotRepository(database.timelineSnapshotDao())
+    }
+
+    val fixedTemplatePresetRepository: FixedTemplatePresetRepository by lazy {
+        FixedTemplatePresetRepository(database.fixedTemplatePresetDao())
+    }
+
     val faceTracker: FaceTracker by lazy { FaceTracker(appContext, faceDetector) }
+
+    // --- Vocal separation (UVR MDX-Net) ---
+    val uvrModelManager: UvrModelManager by lazy { UvrModelManager(appContext, okHttpClient) }
+    val stereoPcmDecoder: StereoPcmDecoder by lazy { StereoPcmDecoder(appContext) }
+    val vocalSeparator: VocalSeparator by lazy {
+        VocalSeparator(appContext, uvrModelManager, stereoPcmDecoder)
+    }
 }
 
 class StudioPopApp : android.app.Application() {

@@ -1,6 +1,7 @@
 package com.mingeek.studiopop.data.editor
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -123,6 +124,13 @@ class VideoEditor(
             val outFile = File(outputDir, "edit_${System.currentTimeMillis()}.mp4")
 
             val removeOriginalAudio = timeline.audioTrack?.replaceOriginal == true
+            // 원본 오디오 AudioProcessor 체인: (center 추출) → (볼륨 조절). 모두 조건부.
+            val originalAudioProcessors = buildList<androidx.media3.common.audio.AudioProcessor> {
+                if (timeline.extractCenterChannel) add(CenterChannelAudioProcessor())
+                if (kotlin.math.abs(timeline.originalVolume - 1f) > 0.001f) {
+                    add(VolumeAudioProcessor(timeline.originalVolume))
+                }
+            }
             val videoItems = effective.map { seg ->
                 val start = seg.sourceStartMs.coerceAtLeast(0L)
                 val end = seg.sourceEndMs.coerceAtLeast(start)
@@ -137,18 +145,33 @@ class VideoEditor(
                     .build()
                 EditedMediaItem.Builder(mediaItem)
                     .setRemoveAudio(removeOriginalAudio)
+                    .apply {
+                        if (!removeOriginalAudio && originalAudioProcessors.isNotEmpty()) {
+                            setEffects(
+                                Effects(originalAudioProcessors, ImmutableList.of())
+                            )
+                        }
+                    }
                     .build()
             }
             val videoSequence = EditedMediaItemSequence(videoItems)
 
             val sequences = mutableListOf(videoSequence)
 
-            // BGM: 영상 전체 길이에 맞춰 한 번만 재생 (필요 시 loop)
+            // BGM: 영상 전체 길이에 맞춰 한 번만 재생 (필요 시 loop). 볼륨 배율 적용 가능.
             timeline.audioTrack?.let { track ->
-                val bgmItem = EditedMediaItem.Builder(
+                val bgmBuilder = EditedMediaItem.Builder(
                     MediaItem.fromUri(track.uri)
-                ).setRemoveVideo(true).build()
-                sequences += EditedMediaItemSequence(listOf(bgmItem), /* isLooping = */ true)
+                ).setRemoveVideo(true)
+                if (kotlin.math.abs(track.volume - 1f) > 0.001f) {
+                    bgmBuilder.setEffects(
+                        Effects(listOf(VolumeAudioProcessor(track.volume)), ImmutableList.of())
+                    )
+                }
+                sequences += EditedMediaItemSequence(
+                    listOf(bgmBuilder.build()),
+                    /* isLooping = */ true,
+                )
             }
 
             // 효과음(SFX): 각 클립마다 [무음 패딩 + SFX 클립] 으로 된 별도 sequence 추가.
@@ -161,16 +184,24 @@ class VideoEditor(
                 val silencePrefixMs = trigger.coerceIn(0L, totalOutputMs)
                 val sfxItems = buildList {
                     if (silencePrefixMs > 0) add(buildSilenceAudioItem(silencePrefixMs))
-                    add(
-                        EditedMediaItem.Builder(MediaItem.fromUri(sfx.audioUri))
-                            .setRemoveVideo(true)
-                            .build()
-                    )
+                    val sfxBuilder = EditedMediaItem.Builder(MediaItem.fromUri(sfx.audioUri))
+                        .setRemoveVideo(true)
+                    if (kotlin.math.abs(sfx.volume - 1f) > 0.001f) {
+                        sfxBuilder.setEffects(
+                            Effects(listOf(VolumeAudioProcessor(sfx.volume)), ImmutableList.of())
+                        )
+                    }
+                    add(sfxBuilder.build())
                 }
                 sequences += EditedMediaItemSequence(sfxItems)
             }
 
-            val overlays = buildOverlayList(timeline)
+            // 출력 프레임 해상도 — 첫 effective 세그먼트의 비디오 해상도 기준.
+            // 모자이크 오버레이가 setScale 을 정확히 계산하려면 필요.
+            val (frameW, frameH) = withContext(Dispatchers.IO) {
+                readFrameSize(effective.first().sourceUri)
+            } ?: DEFAULT_FRAME_SIZE
+            val overlays = buildOverlayList(timeline, frameW, frameH)
             val videoEffects = ImmutableList.Builder<Effect>().apply {
                 aspectRatio?.let {
                     add(
@@ -244,7 +275,11 @@ class VideoEditor(
      * - 고정 텍스트 템플릿은 세그먼트별 cue 로 펼쳐 CaptionOverlay
      * - 전환이 켜져 있으면 FadeAtBoundariesOverlay 추가
      */
-    private fun buildOverlayList(timeline: Timeline): List<TextureOverlay> {
+    private fun buildOverlayList(
+        timeline: Timeline,
+        frameWidthPx: Int,
+        frameHeightPx: Int,
+    ): List<TextureOverlay> {
         val overlays = mutableListOf<TextureOverlay>()
 
         // 자막: style 별 그룹핑 → 그룹마다 CaptionOverlay
@@ -279,7 +314,7 @@ class VideoEditor(
             }
         }
 
-        // 모자이크: 각 영역별 MosaicBlockOverlay
+        // 모자이크: 각 영역별 MosaicBlockOverlay. 프레임 해상도로 정확한 scale 계산.
         for (region in timeline.mosaicRegions) {
             val windows = timeline.rangeToOutputWindows(region.sourceStartMs, region.sourceEndMs)
             if (windows.isNotEmpty() && region.keyframes.isNotEmpty()) {
@@ -287,6 +322,8 @@ class VideoEditor(
                     region = region,
                     activeWindowsMs = windows,
                     sourceStartMs = region.sourceStartMs,
+                    frameWidthPx = frameWidthPx,
+                    frameHeightPx = frameHeightPx,
                 )
             }
         }
@@ -478,7 +515,32 @@ class VideoEditor(
         }
     }
 
+    /**
+     * 주어진 영상 URI 의 해상도(회전 반영) 를 반환. 실패 시 null.
+     */
+    private fun readFrameSize(uri: Uri): Pair<Int, Int>? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                ?.toIntOrNull()
+            val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                ?.toIntOrNull()
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull() ?: 0
+            if (w == null || h == null || w <= 0 || h <= 0) null
+            else if (rotation == 90 || rotation == 270) h to w
+            else w to h
+        } catch (_: Exception) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
     companion object {
         private const val PROGRESS_POLL_MS = 200L
+        /** 프레임 해상도를 읽지 못할 때의 fallback (1080p landscape). */
+        private val DEFAULT_FRAME_SIZE = 1920 to 1080
     }
 }

@@ -39,5 +39,12 @@ class ProjectRepository(
     suspend fun latestAsset(projectId: Long, type: AssetType): AssetEntity? =
         assetDao.latestOfType(projectId, type)
 
+    /** 모든 프로젝트에서 특정 타입의 에셋 관찰. "내 편집본" picker 에서 EXPORT_VIDEO 조회용. */
+    fun observeAllAssetsOfType(type: AssetType): Flow<List<AssetEntity>> =
+        assetDao.observeAllOfType(type)
+
+    suspend fun listAllAssetsOfType(type: AssetType): List<AssetEntity> =
+        assetDao.listAllOfType(type)
+
     suspend fun deleteAsset(asset: AssetEntity) = assetDao.delete(asset)
 }
