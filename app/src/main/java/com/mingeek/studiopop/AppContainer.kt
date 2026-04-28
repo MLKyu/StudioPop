@@ -144,6 +144,11 @@ class AppContainer(context: Context) {
         VoskModelManager(appContext, okHttpClient)
     }
 
+    /** R6: Vosk 화자 분리용 SpeakerModel. fail-open — 다운로드 실패해도 STT 본 흐름은 그대로. */
+    val voskSpeakerModelManager: com.mingeek.studiopop.data.caption.VoskSpeakerModelManager by lazy {
+        com.mingeek.studiopop.data.caption.VoskSpeakerModelManager(appContext, okHttpClient)
+    }
+
     private val whisperApiEngine: WhisperApiEngine by lazy {
         WhisperApiEngine(
             transcriber = chunkedTranscriber,
@@ -152,7 +157,12 @@ class AppContainer(context: Context) {
     }
 
     private val voskEngine: VoskTranscriber by lazy {
-        VoskTranscriber(pcmDecoder, voskModelManager, moshi)
+        VoskTranscriber(
+            pcmDecoder = pcmDecoder,
+            modelManager = voskModelManager,
+            moshi = moshi,
+            speakerModelManager = voskSpeakerModelManager,
+        )
     }
 
     val whisperCppModelManager: WhisperCppModelManager by lazy {

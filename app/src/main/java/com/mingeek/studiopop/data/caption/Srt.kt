@@ -8,6 +8,8 @@ package com.mingeek.studiopop.data.caption
  *              채워지고, 그렇지 않으면 null. 카라오케 자막·강조어 폭탄자막에서 활용한다.
  *              SRT 직렬화에는 포함되지 않으며 (W3C SRT 표준에 word timing 없음), in-memory
  *              에서만 살아남는다.
+ * @param speakerLabel 화자 라벨 ("A", "B", ...). Vosk SpeakerModel + [SpeakerClusterer] 가 채움.
+ *                     null 이면 화자 분리 미실행/미지원. SRT write 는 "[A] 텍스트" prefix 로 보존.
  */
 data class Cue(
     val index: Int,
@@ -15,6 +17,7 @@ data class Cue(
     val endMs: Long,
     val text: String,
     val words: List<CueWord>? = null,
+    val speakerLabel: String? = null,
 )
 
 /**
@@ -69,9 +72,19 @@ object Srt {
         val startMs = parseTimestamp(match.groupValues[1]) ?: return null
         val endMs = parseTimestamp(match.groupValues[2]) ?: return null
         val index = indexLine?.trim()?.toIntOrNull() ?: 0
-        val text = textLines.joinToString("\n")
+        val rawText = textLines.joinToString("\n")
+        // 화자 prefix "[A] 텍스트" 를 분리해 speakerLabel 로 보존, 텍스트는 깨끗하게.
+        val (speaker, text) = SPEAKER_PREFIX_REGEX.find(rawText)?.let {
+            it.groupValues[1] to rawText.substring(it.range.last + 1).trimStart()
+        } ?: (null to rawText)
 
-        return Cue(index = index, startMs = startMs, endMs = endMs, text = text)
+        return Cue(
+            index = index,
+            startMs = startMs,
+            endMs = endMs,
+            text = text,
+            speakerLabel = speaker,
+        )
     }
 
     private fun parseTimestamp(ts: String): Long? {
@@ -91,6 +104,10 @@ object Srt {
                 .append(" --> ")
                 .append(formatTimestamp(cue.endMs))
                 .append('\n')
+            // 화자 라벨이 있으면 "[A] " prefix — 비표준이지만 export/import round-trip 보존되고
+            // 표준 SRT 플레이어에선 그냥 텍스트의 일부로 보임 (기능 깨짐 없음).
+            val spk = cue.speakerLabel?.takeIf { it.isNotBlank() }
+            if (spk != null) append('[').append(spk).append(']').append(' ')
             append(cue.text)
         }
         append('\n')
@@ -104,6 +121,9 @@ object Srt {
         val millis = ms % 1000
         return "%02d:%02d:%02d,%03d".format(h, m, s, millis)
     }
+
+    /** "[A] 텍스트" prefix 매칭 — 단일 영문자(A-Z), 대괄호 + 한 칸 공백. */
+    private val SPEAKER_PREFIX_REGEX = Regex("""^\[([A-Z])\]\s?""")
 
     private val TIMESTAMP_REGEX = Regex("""(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})""")
     private val TIMING_REGEX =
