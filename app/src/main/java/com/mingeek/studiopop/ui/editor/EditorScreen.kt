@@ -520,6 +520,7 @@ fun EditorScreen(
                         selectedCaptionId = state.editingItem?.id,
                         selectedImageLayerId = state.selectedImageLayerId,
                         selectedMosaicId = state.selectedMosaicId,
+                        effectiveCaptionIds = state.captionEffectIds.keys,
                         onCaptionTap = viewModel::openCaptionEditorFor,
                         onTextLayerTap = viewModel::openTextLayerEditorFor,
                         onImageLayerTap = viewModel::selectImageLayer,

@@ -72,6 +72,11 @@ fun TimelineView(
     pxPerMs: Float = DEFAULT_PX_PER_MS,
     /** 타임라인 높이. null 이면 orientation 에 따라 자동 (세로 200, 가로 260). */
     heightDp: Dp? = null,
+    /**
+     * R6 폴리시: 자막 스타일 효과가 적용된 자막 id 집합. 이 집합에 속한 자막은 막대에 ✨
+     * prefix + 강조 색으로 표시되어, 시트를 닫고도 어떤 자막이 효과가 켜져 있는지 한눈에 확인 가능.
+     */
+    effectiveCaptionIds: Set<String> = emptySet(),
     onCaptionTap: (String) -> Unit,
     onTextLayerTap: (String) -> Unit,
     onImageLayerTap: (String) -> Unit = {},
@@ -173,18 +178,22 @@ fun TimelineView(
                 }
             }
 
-            // 3) 자막 막대 (하단 라인)
+            // 3) 자막 막대 (하단 라인). 효과 적용된 자막은 ✨ prefix + 네온 톤 색으로 강조.
+            val effectAccentColor = MaterialTheme.colorScheme.primary
             Box(modifier = Modifier.fillMaxHeight()) {
                 timeline.captions.forEach { cap ->
+                    val hasEffect = cap.id in effectiveCaptionIds
                     OverlayBar(
                         id = cap.id,
-                        text = cap.text.ifBlank { "…" },
+                        text = if (hasEffect) "✨ ${cap.text.ifBlank { "…" }}"
+                            else cap.text.ifBlank { "…" },
                         sourceStartMs = cap.sourceStartMs,
                         sourceEndMs = cap.sourceEndMs,
                         timeline = timeline,
                         pxPerMs = pxPerMs,
                         topDp = CAPTION_BAR_TOP_DP.dp,
-                        barColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f),
+                        barColor = if (hasEffect) effectAccentColor.copy(alpha = 0.85f)
+                            else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f),
                         isSelected = cap.id == selectedCaptionId,
                         onTap = { onCaptionTap(cap.id) },
                         onResize = { s, e -> onCaptionResize(cap.id, s, e) },
