@@ -86,6 +86,7 @@ import com.mingeek.studiopop.data.text.CaptionEffectResolver
 import com.mingeek.studiopop.ui.editor.components.AiPackageSheet
 import com.mingeek.studiopop.ui.editor.components.ThemeSelectorSheet
 import com.mingeek.studiopop.ui.text.PreviewBeatBusBinder
+import com.mingeek.studiopop.ui.text.BombCaptionOverlay
 import com.mingeek.studiopop.ui.text.RichTextOverlay
 import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
 import com.mingeek.studiopop.ui.editor.components.AudioMixSheet
@@ -437,6 +438,14 @@ fun EditorScreen(
                             beatBus = container.beatBus,
                             typefaceProvider = typefaceProvider,
                         )
+                        // R6: 강조어 폭탄자막 — RichText 위에 한 번 큰 글씨가 폭발.
+                        BombCaptionOverlay(
+                            timeline = state.timeline,
+                            currentSourceMs = sourceTimeMs,
+                            bombCaptionIds = state.captionBombIds,
+                            captionWords = state.captionWords,
+                            modifier = Modifier.fillMaxSize(),
+                        )
                         PreviewCaptionOverlay(
                             timeline = state.timeline,
                             currentOutputMs = state.playheadOutputMs,
@@ -624,6 +633,7 @@ fun EditorScreen(
         val currentEffectId = if (showEffectPicker) state.captionEffectIds[item.id] else null
         val beatSyncEnabled = showEffectPicker && item.id in state.captionBeatSyncIds
         val karaokeEnabled = showEffectPicker && item.id in state.captionKaraokeIds
+        val bombEnabled = showEffectPicker && item.id in state.captionBombIds
         CaptionEditorSheet(
             item = item,
             title = title,
@@ -638,6 +648,8 @@ fun EditorScreen(
             audioAnalyzing = state.isAnalyzingAudio,
             karaokeEnabled = karaokeEnabled,
             onKaraokeChange = { enabled -> viewModel.setCaptionKaraoke(item.id, enabled) },
+            bombEnabled = bombEnabled,
+            onBombChange = { enabled -> viewModel.setCaptionBomb(item.id, enabled) },
         )
     }
 

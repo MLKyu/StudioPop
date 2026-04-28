@@ -170,6 +170,12 @@ data class EditorUiState(
      */
     val captionKaraokeIds: Set<String> = emptySet(),
     /**
+     * R6: 강조어 폭탄자막 활성 자막 id 집합. 활성화 시 BombCaptionOverlay 가 큐 내 가장 긴 단어를
+     * 한 번만 큰 글씨로 폭발시킴. STT word timing 이 있으면 해당 단어의 [startMs..endMs] 에 정확히
+     * 트리거, 없으면 큐 시작 직후 600ms 동안 텍스트 첫 단어로 fallback.
+     */
+    val captionBombIds: Set<String> = emptySet(),
+    /**
      * R5c3a 후속: 자막 id → 실 STT word timing. CaptionWordStore 에서 첫 segment uri 매칭으로
      * 채워짐. 비어 있으면 카라오케는 fakeWordTimings fallback. SRT 직접 import / 사용자 직접
      * 입력 자막은 비어 있다.
@@ -561,6 +567,7 @@ class EditorViewModel(
                 captionEffectIds = emptyMap(),
                 captionBeatSyncIds = emptySet(),
                 captionKaraokeIds = emptySet(),
+                captionBombIds = emptySet(),
                 captionWords = emptyMap(),
                 audioAnalysis = null,
                 isAnalyzingAudio = false,
@@ -631,6 +638,7 @@ class EditorViewModel(
                 captionEffectIds = emptyMap(),
                 captionBeatSyncIds = emptySet(),
                 captionKaraokeIds = emptySet(),
+                captionBombIds = emptySet(),
                 captionWords = captionWords,
             )
         }
@@ -915,6 +923,9 @@ class EditorViewModel(
                 captionKaraokeIds = if (kind == EditKind.CAPTION)
                     it.captionKaraokeIds - id
                 else it.captionKaraokeIds,
+                captionBombIds = if (kind == EditKind.CAPTION)
+                    it.captionBombIds - id
+                else it.captionBombIds,
                 captionWords = if (kind == EditKind.CAPTION)
                     it.captionWords - id
                 else it.captionWords,
@@ -955,6 +966,19 @@ class EditorViewModel(
             val updated = if (enabled) state.captionKaraokeIds + captionId
                 else state.captionKaraokeIds - captionId
             state.copy(captionKaraokeIds = updated)
+        }
+    }
+
+    /**
+     * R6: 자막에 강조어 폭탄자막 모드 적용 여부. 활성화하면 큐 안의 가장 긴 단어가 큰 글씨로
+     * scale bounce + jitter 와 함께 한 번 등장 — STT word timing 이 있으면 그 단어의
+     * [startMs..endMs] 에 정확히 발사, 없으면 큐 시작 직후 600ms 에 발사.
+     */
+    fun setCaptionBomb(captionId: String, enabled: Boolean) {
+        _uiState.update { state ->
+            val updated = if (enabled) state.captionBombIds + captionId
+                else state.captionBombIds - captionId
+            state.copy(captionBombIds = updated)
         }
     }
 

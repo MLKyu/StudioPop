@@ -77,6 +77,13 @@ fun CaptionEditorSheet(
      */
     karaokeEnabled: Boolean = false,
     onKaraokeChange: (Boolean) -> Unit = {},
+    /**
+     * R6: 강조어 폭탄자막 모드. 활성 시 큐 안 가장 긴 단어가 큰 글씨로 한 번 폭발(scale bounce
+     * + jitter). STT word timing 이 있으면 그 단어 시간창에 맞춰 발사, 없으면 큐 시작 직후
+     * 600ms. 효과 적용된 자막에서만 의미가 있어 효과 미선택 시 disabled.
+     */
+    bombEnabled: Boolean = false,
+    onBombChange: (Boolean) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var text by remember(item.id) { mutableStateOf(item.text) }
@@ -202,6 +209,28 @@ fun CaptionEditorSheet(
                         )
                         val sub = if (beatToggleEnabled) {
                             "단어별 색이 시간 따라 채워짐"
+                        } else "효과 선택 후 활성화 가능"
+                        Text(sub, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                // R6: 강조어 폭탄자막 토글
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Switch(
+                        checked = bombEnabled,
+                        onCheckedChange = onBombChange,
+                        enabled = beatToggleEnabled,
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "💥 강조어 폭탄",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        val sub = if (beatToggleEnabled) {
+                            "큐의 가장 긴 단어가 한 번 크게 터짐"
                         } else "효과 선택 후 활성화 가능"
                         Text(sub, style = MaterialTheme.typography.bodySmall)
                     }
