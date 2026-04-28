@@ -69,6 +69,13 @@ fun AiPackageSheet(
     onDismiss: () -> Unit,
     onApplyCaptionSuggestions: () -> Unit,
     onApplyEffectSuggestions: () -> Unit,
+    /**
+     * R6: 제안 종류별 적용 가능 여부. 자산이 없는 SFX·등록 안 된 테마 등이 자동 disabled.
+     * 미지정 시 보수적으로 AddCaption/AddEffect 만 지원으로 간주 (기존 R5c2 동작).
+     */
+    isSuggestionSupported: (EditSuggestion) -> Boolean = { s ->
+        s is EditSuggestion.AddCaption || s is EditSuggestion.AddEffect
+    },
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -250,6 +257,7 @@ fun AiPackageSheet(
                     SuggestionRow(
                         suggestion = s,
                         applied = idx in appliedSuggestionIndices,
+                        isSupported = isSuggestionSupported(s),
                         onApply = { onApplySuggestionAt(idx) },
                     )
                 }
@@ -293,14 +301,13 @@ private fun SectionTitle(text: String) {
 
 /**
  * 제안 한 줄 미리보기. 종류별 이모지 + 시간 범위 + 짧은 설명 + 우측 액션 버튼.
- * 적용 종류별 라벨:
- *  - 추가/✓ 적용됨 — AddCaption / AddEffect (실 적용 가능)
- *  - 예정 — AddCut / AddSfx / ApplyTheme (R6+ 에서 처리, 현재는 disabled 로 명시)
+ * [isSupported] 가 false 면 "불가" 라벨 + disabled — 자산 미등록 SFX, 등록 안 된 테마 등.
  */
 @Composable
 private fun SuggestionRow(
     suggestion: EditSuggestion,
     applied: Boolean,
+    isSupported: Boolean,
     onApply: () -> Unit,
 ) {
     val (emoji, summary) = when (val s = suggestion) {
@@ -320,8 +327,6 @@ private fun SuggestionRow(
         is EditSuggestion.ApplyTheme ->
             "🎨" to "테마 적용: ${s.themeId}"
     }
-    val isSupported = suggestion is EditSuggestion.AddCaption ||
-        suggestion is EditSuggestion.AddEffect
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -340,7 +345,7 @@ private fun SuggestionRow(
         ) {
             Text(
                 when {
-                    !isSupported -> "예정"
+                    !isSupported -> "불가"
                     applied -> "✓ 적용됨"
                     else -> "추가"
                 }

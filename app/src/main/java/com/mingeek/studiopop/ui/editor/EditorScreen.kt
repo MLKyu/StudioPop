@@ -718,6 +718,7 @@ fun EditorScreen(
                 // 시각적으로 확인하고 추가 결정 가능하게.
                 onApplyCaptionSuggestions = viewModel::applyCaptionSuggestions,
                 onApplyEffectSuggestions = viewModel::applyEffectSuggestions,
+                isSuggestionSupported = viewModel::isSuggestionSupported,
             )
         }
     }
