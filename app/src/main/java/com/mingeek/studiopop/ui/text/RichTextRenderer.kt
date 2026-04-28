@@ -58,11 +58,17 @@ fun RichTextRenderer(
     currentTimeMs: Long? = null,
     karaokeHighlightColor: Int = 0xFFFFEB3B.toInt(),
     karaokeProgressColor: Int = 0xFFA6FF00.toInt(),
+    /**
+     * R6: fontPackId → Typeface 변환기. null 이면 시스템 기본 typeface (기존 동작 유지).
+     * 호출 측이 [com.mingeek.studiopop.data.design.TypefaceLoader] 를 [com.mingeek.studiopop.data.design.DesignTokens.fontPack] 와
+     * 함께 넘겨주면 테마별 폰트 변경이 시각적으로 적용된다.
+     */
+    typefaceProvider: ((fontPackId: String, weight: Int) -> android.graphics.Typeface)? = null,
 ) {
     if (text.isBlank()) return
     val density = LocalDensity.current
-    val measured = remember(text, style, baseFontSizeSp, density) {
-        measure(text, style, baseFontSizeSp, density)
+    val measured = remember(text, style, baseFontSizeSp, density, typefaceProvider) {
+        measure(text, style, baseFontSizeSp, density, typefaceProvider)
     }
     val widthDp = with(density) { measured.canvasWidth.toDp() }
     val heightDp = with(density) { measured.canvasHeight.toDp() }
@@ -175,17 +181,20 @@ private fun measure(
     style: RichTextStyle,
     baseFontSizeSp: Float,
     density: Density,
+    typefaceProvider: ((String, Int) -> Typeface)? = null,
 ): Measured {
     val text = applyTransform(rawText, style.transform)
     val sizePx = with(density) { (baseFontSizeSp * style.sizeScale).sp.toPx() }
+    val resolvedTypeface = typefaceProvider?.invoke(style.fontPackId, style.fontWeight)
+        ?: Typeface.create(
+            Typeface.DEFAULT,
+            if (style.fontWeight >= 700) Typeface.BOLD else Typeface.NORMAL,
+        )
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = sizePx
         isAntiAlias = true
         isSubpixelText = true
-        typeface = Typeface.create(
-            Typeface.DEFAULT,
-            if (style.fontWeight >= 700) Typeface.BOLD else Typeface.NORMAL,
-        )
+        typeface = resolvedTypeface
         letterSpacing = style.letterSpacingEm
     }
     val width = paint.measureText(text)

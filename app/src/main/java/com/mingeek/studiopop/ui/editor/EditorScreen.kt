@@ -84,6 +84,7 @@ import com.mingeek.studiopop.data.editor.TransitionKind
 import com.mingeek.studiopop.data.library.LibraryAssetKind
 import com.mingeek.studiopop.data.text.CaptionEffectResolver
 import com.mingeek.studiopop.ui.editor.components.AiPackageSheet
+import com.mingeek.studiopop.ui.editor.components.ThemeSelectorSheet
 import com.mingeek.studiopop.ui.text.PreviewBeatBusBinder
 import com.mingeek.studiopop.ui.text.RichTextOverlay
 import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
@@ -119,6 +120,18 @@ fun EditorScreen(
     val appContext = LocalContext.current.applicationContext
     val container = (appContext as StudioPopApp).container
 
+    // R6: typefaceProvider 람다를 remember 로 안정화 — 매 컴포지션마다 새 인스턴스로 생성되면
+    // RichTextRenderer 의 measure 가 재실행돼 Paint 캐시가 무효해짐 (재생 중 60fps recompose
+    // 가 도는 자막 영역에선 큰 회귀). container 가 같은 동안엔 같은 람다 재사용.
+    val typefaceProvider = remember(container) {
+        { fontPackId: String, weight: Int ->
+            container.typefaceLoader.typeface(
+                container.designTokens.fontPack(fontPackId),
+                defaultWeight = weight,
+            )
+        }
+    }
+
     // R4.5: 첫 segment 의 sourceUri 가 바뀌면 오디오 분석 자동 트리거. 캐시 hit 면 ViewModel
     // 안에서 즉시 반환.
     LaunchedEffect(state.timeline.segments.firstOrNull()?.sourceUri) {
@@ -143,6 +156,9 @@ fun EditorScreen(
     // R5c1: AI 패키지 주제 입력 다이얼로그
     var showAiTopicDialog by remember { mutableStateOf(false) }
     var aiTopicInput by remember { mutableStateOf("") }
+
+    // R6: 채널 테마 선택 시트
+    var showThemeSheet by remember { mutableStateOf(false) }
 
     // DeX 키보드 shortcut — 편집기 진입 시 focus 잡아 Space/Arrow/Ctrl+E/Esc/Delete 처리.
     val keyFocus = remember { FocusRequester() }
@@ -247,6 +263,15 @@ fun EditorScreen(
                                 )
                             }
                             Text(aiButtonLabel)
+                        }
+                        // R6: 채널 테마 — 자막 톤·폰트 일괄 변경
+                        OutlinedButton(
+                            onClick = { showThemeSheet = true },
+                            enabled = state.hasVideo,
+                            modifier = Modifier.padding(end = 4.dp),
+                        ) {
+                            val current = container.designTokens.theme(state.selectedThemeId)
+                            Text("🎨 ${current.displayName}")
                         }
                         OutlinedButton(
                             onClick = viewModel::startExport,
@@ -388,7 +413,7 @@ fun EditorScreen(
                                 captionEffectIds = state.captionEffectIds,
                                 effectRegistry = container.effectRegistry,
                                 designTokens = container.designTokens,
-                                themeId = "studiopop.default",
+                                themeId = state.selectedThemeId,
                                 captionBeatSyncIds = state.captionBeatSyncIds,
                                 captionKaraokeIds = state.captionKaraokeIds,
                                 captionWords = state.captionWords,
@@ -409,6 +434,7 @@ fun EditorScreen(
                             currentSourceMs = sourceTimeMs,
                             modifier = Modifier.fillMaxSize(),
                             beatBus = container.beatBus,
+                            typefaceProvider = typefaceProvider,
                         )
                         PreviewCaptionOverlay(
                             timeline = state.timeline,
@@ -597,6 +623,16 @@ fun EditorScreen(
             dismissButton = {
                 TextButton(onClick = { showAiTopicDialog = false }) { Text("취소") }
             },
+        )
+    }
+
+    // R6: 채널 테마 선택 시트
+    if (showThemeSheet) {
+        ThemeSelectorSheet(
+            designTokens = container.designTokens,
+            selectedThemeId = state.selectedThemeId,
+            onSelect = viewModel::setSelectedTheme,
+            onDismiss = { showThemeSheet = false },
         )
     }
 

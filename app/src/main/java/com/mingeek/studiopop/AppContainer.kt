@@ -55,6 +55,7 @@ import com.mingeek.studiopop.data.audio.LoudnessAnalyzerImpl
 import com.mingeek.studiopop.data.audio.WaveformSampler
 import com.mingeek.studiopop.data.audio.WaveformSamplerImpl
 import com.mingeek.studiopop.data.design.DesignTokens
+import com.mingeek.studiopop.data.design.TypefaceLoader
 import com.mingeek.studiopop.data.design.registerBuiltinFontPacks
 import com.mingeek.studiopop.data.design.registerBuiltinLuts
 import com.mingeek.studiopop.data.design.registerBuiltinThemes
@@ -324,6 +325,9 @@ class AppContainer(context: Context) {
             registerBuiltinThemes()
         }
     }
+
+    /** R6: fontPackId → Typeface 매핑. ttf 자산이 있으면 그걸, 없으면 시스템 변형 fallback. */
+    val typefaceLoader: TypefaceLoader by lazy { TypefaceLoader(appContext) }
 
     val analysisCache: AnalysisCache by lazy { AnalysisCache() }
 

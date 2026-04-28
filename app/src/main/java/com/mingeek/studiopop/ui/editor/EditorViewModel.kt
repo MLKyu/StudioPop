@@ -198,6 +198,12 @@ data class EditorUiState(
      * 없으면 NOOP.
      */
     val autoDuckingEnabled: Boolean = false,
+    /**
+     * R6 자산 라운드: 채널 톤 테마 id. CaptionEffectResolver 가 이 id 로 ThemePack 조회해
+     * 자막 색·폰트·전환을 일제히 적용. 영상 교체 시 유지 — 사용자 채널 정체성은 영상별로 바뀌지
+     * 않음.
+     */
+    val selectedThemeId: String = "studiopop.default",
 ) {
     val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
@@ -1625,6 +1631,13 @@ class EditorViewModel(
      */
     fun setAutoDucking(enabled: Boolean) {
         _uiState.update { it.copy(autoDuckingEnabled = enabled) }
+    }
+
+    /**
+     * R6 자산 라운드: 채널 톤 테마 변경. 즉시 자막·썸네일 톤이 일제히 갱신.
+     */
+    fun setSelectedTheme(themeId: String) {
+        _uiState.update { it.copy(selectedThemeId = themeId) }
     }
 
     fun startExport() {

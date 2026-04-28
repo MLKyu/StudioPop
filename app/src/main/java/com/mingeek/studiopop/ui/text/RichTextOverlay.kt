@@ -30,6 +30,7 @@ fun RichTextOverlay(
     modifier: Modifier = Modifier,
     baseFontSizeSp: Float = 28f,
     beatBus: BeatBus? = null,
+    typefaceProvider: ((fontPackId: String, weight: Int) -> android.graphics.Typeface)? = null,
 ) {
     val active = remember(elements, currentSourceMs) {
         elements.filter {
@@ -72,6 +73,7 @@ fun RichTextOverlay(
                     .scale(scale),
                 words = words,
                 currentTimeMs = currentMs,
+                typefaceProvider = typefaceProvider,
             )
         }
     }
