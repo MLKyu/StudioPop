@@ -648,6 +648,9 @@ fun EditorScreen(
                 captionSuggestionCount = captionSuggestionCount,
                 effectSuggestionCount = effectSuggestionCount,
                 thumbnailBitmaps = state.thumbnailPreviewBitmaps,
+                suggestions = state.editSuggestions,
+                selectedThumbnailVariantId = state.selectedThumbnailVariantId,
+                onSelectThumbnail = viewModel::setSelectedThumbnail,
                 onDismiss = viewModel::closeAiPackageSheet,
                 onApplyCaptionSuggestions = {
                     viewModel.applyCaptionSuggestions()

@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -26,11 +29,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mingeek.studiopop.data.ai.EditSuggestion
 import com.mingeek.studiopop.data.ai.YoutubePackage
 
 /**
@@ -53,6 +60,9 @@ fun AiPackageSheet(
     captionSuggestionCount: Int,
     effectSuggestionCount: Int,
     thumbnailBitmaps: Map<String, Bitmap>,
+    suggestions: List<EditSuggestion>,
+    selectedThumbnailVariantId: String?,
+    onSelectThumbnail: (String) -> Unit,
     onDismiss: () -> Unit,
     onApplyCaptionSuggestions: () -> Unit,
     onApplyEffectSuggestions: () -> Unit,
@@ -154,10 +164,20 @@ fun AiPackageSheet(
                 }
             }
 
-            // 썸네일 변형 — 합성 비트맵 직접 표시. 비트맵 맵에 없는 변형은 메타만.
-            SectionTitle("썸네일 변형 (${pkg.thumbnailVariants.size}개)")
+            // 썸네일 변형 — 합성 비트맵 직접 표시 + 사용자가 메인으로 선택할 수 있게 카드 클릭.
+            SectionTitle("썸네일 변형 (${pkg.thumbnailVariants.size}개) — 탭하면 메인으로 선택")
             pkg.thumbnailVariants.take(5).forEach { v ->
-                Card(modifier = Modifier.fillMaxWidth()) {
+                val isSelected = v.id == selectedThumbnailVariantId
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(
+                            width = if (isSelected) 3.dp else 0.dp,
+                            color = if (isSelected) Color(0xFFA6FF00) else Color.Transparent,
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        .clickable { onSelectThumbnail(v.id) },
+                ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         val bmp = thumbnailBitmaps[v.id]
                         if (bmp != null && !bmp.isRecycled) {
@@ -183,14 +203,26 @@ fun AiPackageSheet(
                                 )
                             }
                         }
-                        Text(v.mainText, style = MaterialTheme.typography.titleSmall)
-                        if (v.subText.isNotBlank()) {
-                            Text(v.subText, style = MaterialTheme.typography.bodySmall)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(v.mainText, style = MaterialTheme.typography.titleSmall)
+                                if (v.subText.isNotBlank()) {
+                                    Text(v.subText, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text(
+                                    "데코: ${v.decoration} · 위치: ${v.anchor}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            if (isSelected) {
+                                Text(
+                                    "✓ 메인",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFA6FF00),
+                                )
+                            }
                         }
-                        Text(
-                            "데코: ${v.decoration} · 위치: ${v.anchor}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
                     }
                 }
             }
@@ -209,6 +241,16 @@ fun AiPackageSheet(
             // 자막/효과 제안 적용
             if (captionSuggestionCount > 0 || effectSuggestionCount > 0) {
                 SectionTitle("AI 편집 제안")
+                // 제안 항목별 미리보기 — 사용자가 적용 전에 어떤 변경이 일어날지 한눈에 확인.
+                suggestions.take(15).forEach { s ->
+                    SuggestionRow(s)
+                }
+                if (suggestions.size > 15) {
+                    Text(
+                        "... 외 ${suggestions.size - 15}개",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (captionSuggestionCount > 0) {
                         OutlinedButton(
@@ -239,6 +281,43 @@ fun AiPackageSheet(
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium)
+}
+
+/**
+ * 제안 한 줄 미리보기. 종류별 이모지 + 시간 범위 + 짧은 설명.
+ */
+@Composable
+private fun SuggestionRow(s: EditSuggestion) {
+    val (emoji, summary) = when (s) {
+        is EditSuggestion.AddCaption ->
+            "💬" to "${formatMs(s.sourceStartMs)}~${formatMs(s.sourceEndMs)}  " +
+                s.text.take(30)
+        is EditSuggestion.AddEffect ->
+            "✨" to "${formatMs(s.sourceStartMs)}~${formatMs(s.sourceEndMs)}  " +
+                s.effectDefinitionId.removePrefix("caption.")
+                    .removePrefix("transition.")
+                    .removePrefix("video_fx.")
+                    .removePrefix("shorts.")
+        is EditSuggestion.AddCut ->
+            "✂️" to "${formatMs(s.sourceStartMs)}~${formatMs(s.sourceEndMs)} 컷"
+        is EditSuggestion.AddSfx ->
+            "🔊" to "${formatMs(s.sourceStartMs)}  ${s.sfxAssetId}"
+        is EditSuggestion.ApplyTheme ->
+            "🎨" to "테마 적용: ${s.themeId}"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(emoji, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "  $summary",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
 private fun copyToClipboard(context: Context, label: String, value: String) {

@@ -204,6 +204,12 @@ data class EditorUiState(
      * 않음.
      */
     val selectedThemeId: String = "studiopop.default",
+    /**
+     * R6 폴리시: AI 가 만든 썸네일 변형 5장 중 사용자가 메인으로 선택한 id. null 이면 미선택.
+     * 새 generatePackage 시 첫 변형으로 자동 초기화. 향후 업로드 시점에 이 id 의 비트맵을 메인
+     * 썸네일로 사용.
+     */
+    val selectedThumbnailVariantId: String? = null,
 ) {
     val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
@@ -556,6 +562,7 @@ class EditorViewModel(
                 showAiPackageSheet = false,
                 thumbnailPreviewBitmaps = emptyMap(),
                 effectStack = com.mingeek.studiopop.data.effects.EffectStack.EMPTY,
+                selectedThumbnailVariantId = null,
             )
         }
     }
@@ -1027,6 +1034,9 @@ class EditorViewModel(
                     thumbnailPreviewBitmaps = thumbBitmaps,
                     aiPackagePhase = AiPackagePhase.Idle,
                     showAiPackageSheet = true,
+                    // 첫 합성 변형을 기본 메인 썸네일로 — 사용자가 시트에서 다른 걸 누르면 갱신
+                    selectedThumbnailVariantId = ytPackage.thumbnailVariants.firstOrNull()?.id
+                        ?: it.selectedThumbnailVariantId,
                 )
             }
         }
@@ -1638,6 +1648,11 @@ class EditorViewModel(
      */
     fun setSelectedTheme(themeId: String) {
         _uiState.update { it.copy(selectedThemeId = themeId) }
+    }
+
+    /** R6 폴리시: AI 썸네일 5장 중 메인으로 사용할 변형 선택. */
+    fun setSelectedThumbnail(variantId: String?) {
+        _uiState.update { it.copy(selectedThumbnailVariantId = variantId) }
     }
 
     fun startExport() {
