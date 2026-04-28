@@ -223,6 +223,12 @@ data class EditorUiState(
      * 새 패키지 생성/영상 교체 시 자동 초기화.
      */
     val appliedSuggestionIndices: Set<Int> = emptySet(),
+    /**
+     * R6: VIDEO_FX 막대를 탭했을 때 표시할 편집 대상 EffectInstance id. null 이면 시트 닫힘.
+     */
+    val editingVideoFxId: String? = null,
+    /** R6: 영상 효과 추가 sheet (Ken Burns / Zoom Punch / LUT) 노출 여부. */
+    val showVideoFxAddSheet: Boolean = false,
 ) {
     val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
@@ -579,6 +585,8 @@ class EditorViewModel(
                 effectStack = com.mingeek.studiopop.data.effects.EffectStack.EMPTY,
                 selectedThumbnailVariantId = null,
                 appliedSuggestionIndices = emptySet(),
+                editingVideoFxId = null,
+                showVideoFxAddSheet = false,
             )
         }
     }
@@ -1826,6 +1834,117 @@ class EditorViewModel(
         _uiState.update { it.copy(selectedThumbnailVariantId = variantId) }
     }
 
+    // --- R6: 영상 효과 (effectStack) 직접 편집 -------------------------------
+
+    /** TimelineView 의 VIDEO_FX 막대 탭 → 편집 시트 오픈. */
+    fun openVideoFxEditor(id: String) {
+        _uiState.update { it.copy(editingVideoFxId = id) }
+    }
+
+    fun closeVideoFxEditor() {
+        _uiState.update { it.copy(editingVideoFxId = null) }
+    }
+
+    fun openVideoFxAddSheet() {
+        _uiState.update { it.copy(showVideoFxAddSheet = true) }
+    }
+
+    fun closeVideoFxAddSheet() {
+        _uiState.update { it.copy(showVideoFxAddSheet = false) }
+    }
+
+    /** EffectStack 에서 인스턴스 제거. 편집 시트가 열려 있으면 같이 닫음. */
+    fun removeEffectInstance(id: String) {
+        _uiState.update {
+            it.copy(
+                effectStack = it.effectStack.remove(id),
+                editingVideoFxId = if (it.editingVideoFxId == id) null else it.editingVideoFxId,
+            )
+        }
+    }
+
+    /** 막대 양끝 핸들 드래그 — 시작/끝 시간 조정. 최소 길이([MIN_FX_DURATION_MS]) 보장. */
+    fun resizeEffectInstance(id: String, startDeltaMs: Long, endDeltaMs: Long) {
+        _uiState.update { state ->
+            val stack = state.effectStack
+            val inst = stack.instances.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (inst.sourceStartMs + startDeltaMs).coerceAtLeast(0L)
+            val newEnd = (inst.sourceEndMs + endDeltaMs).coerceAtLeast(newStart + MIN_FX_DURATION_MS)
+            val updated = inst.copy(sourceStartMs = newStart, sourceEndMs = newEnd)
+            state.copy(effectStack = stack.update(updated))
+        }
+    }
+
+    /** 롱프레스 후 드래그 — duration 유지하며 평행 이동. */
+    fun translateEffectInstance(id: String, deltaMs: Long) {
+        _uiState.update { state ->
+            val stack = state.effectStack
+            val inst = stack.instances.firstOrNull { it.id == id } ?: return@update state
+            val newStart = (inst.sourceStartMs + deltaMs).coerceAtLeast(0L)
+            val width = inst.sourceEndMs - inst.sourceStartMs
+            val updated = inst.copy(sourceStartMs = newStart, sourceEndMs = newStart + width)
+            state.copy(effectStack = stack.update(updated))
+        }
+    }
+
+    /**
+     * 사용자가 영상 효과 추가 시트에서 한 항목 선택 — 현재 플레이헤드 source 시각 기준으로
+     * default duration 동안 적용하는 EffectInstance 생성. LUT 은 추천 강도 그대로.
+     */
+    /**
+     * LUT 은 영상 전체에 적용하는 게 의도 자연스러우므로 별도 진입점 — 플레이헤드 무관하게
+     * sourceStartMs=0 ~ outputDuration 까지 덮음. 이미 같은 lutId 가 effectStack 에 있으면
+     * 중복 추가하지 않음.
+     */
+    fun addLutEffectFull(lutId: String) {
+        val state = _uiState.value
+        if (!state.hasVideo) return
+        if (state.effectStack.instances.any { it.params.assetId("lutId") == lutId }) {
+            _uiState.update { it.copy(showVideoFxAddSheet = false) }
+            return
+        }
+        val maxEnd = state.timeline.segments.maxOfOrNull { it.sourceEndMs } ?: return
+        val instance = com.mingeek.studiopop.data.effects.EffectInstance(
+            definitionId = lutId,
+            sourceStartMs = 0L,
+            sourceEndMs = maxEnd,
+            params = com.mingeek.studiopop.data.effects.EffectParamValues(
+                mapOf("lutId" to lutId),
+            ),
+        )
+        _uiState.update {
+            it.copy(
+                effectStack = it.effectStack.add(instance),
+                showVideoFxAddSheet = false,
+            )
+        }
+    }
+
+    fun addEffectInstanceAtPlayhead(
+        definitionId: String,
+        durationMs: Long = DEFAULT_FX_DURATION_MS,
+        params: Map<String, Any> = emptyMap(),
+    ) {
+        val state = _uiState.value
+        val playheadOutputMs = state.playheadOutputMs
+        val sourceTime = state.timeline.mapOutputToSource(playheadOutputMs)?.second ?: return
+        val sourceEnd = (sourceTime + durationMs).coerceAtMost(
+            state.timeline.segments.maxOfOrNull { it.sourceEndMs } ?: (sourceTime + durationMs)
+        )
+        val instance = com.mingeek.studiopop.data.effects.EffectInstance(
+            definitionId = definitionId,
+            sourceStartMs = sourceTime,
+            sourceEndMs = sourceEnd,
+            params = com.mingeek.studiopop.data.effects.EffectParamValues(params),
+        )
+        _uiState.update {
+            it.copy(
+                effectStack = it.effectStack.add(instance),
+                showVideoFxAddSheet = false,
+            )
+        }
+    }
+
     fun startExport() {
         val state = _uiState.value
         if (!state.hasVideo) return
@@ -1978,6 +2097,10 @@ class EditorViewModel(
         private const val DEFAULT_CUT_DURATION_MS = 2_000L
         private const val DEFAULT_SFX_DURATION_MS = 1_500L
         private const val DEFAULT_MOSAIC_DURATION_MS = 3_000L
+        /** R6: 사용자 직접 추가 영상 효과의 기본 길이 (Ken Burns/Zoom Punch 모두 2초 권장). */
+        private const val DEFAULT_FX_DURATION_MS = 2_000L
+        /** 영상 효과 막대를 너무 짧게 줄이지 못하게 — sample 보장 + UX. */
+        private const val MIN_FX_DURATION_MS = 200L
         private const val AUTO_FACE_DEFAULT_RANGE_MS = 10_000L
         private const val MIN_OVERLAY_DURATION_MS = 200L
         /** 편집 중 타임라인 자동 저장 디바운스. 사용자가 드래그·타이핑을 마치는 경계 정도. */

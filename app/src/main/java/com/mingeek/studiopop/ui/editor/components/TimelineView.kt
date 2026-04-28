@@ -98,6 +98,9 @@ fun TimelineView(
     onImageLayerTap: (String) -> Unit = {},
     onMosaicTap: (String) -> Unit = {},
     onSfxTap: (String) -> Unit = {},
+    onVideoFxTap: (String) -> Unit = {},
+    onVideoFxResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit = { _, _, _ -> },
+    onVideoFxTranslate: (id: String, deltaMs: Long) -> Unit = { _, _ -> },
     onPlayheadDrag: (Long) -> Unit,
     onDividerDrag: (prevSegId: String, nextSegId: String, sourceDeltaMs: Long) -> Unit,
     onCaptionResize: (id: String, startDeltaMs: Long, endDeltaMs: Long) -> Unit,
@@ -299,8 +302,8 @@ fun TimelineView(
                 }
             }
 
-            // 8) VIDEO_FX 레인 — Ken Burns / Zoom Punch / Speed Ramp 등.
-            //    탭/리사이즈/이동은 R6 후속 작업 (현재는 시각 표시만).
+            // 8) VIDEO_FX 레인 — Ken Burns / Zoom Punch 등. 자막 OverlayBar 와 동일하게
+            //    탭(편집 시트) / 양끝 핸들(리사이즈) / 롱프레스 드래그(이동) 지원.
             if (videoFxBars.isNotEmpty()) {
                 Box(modifier = Modifier.fillMaxHeight()) {
                     val fxColor = Color(0xFF42A5F5).copy(alpha = 0.85f)
@@ -315,9 +318,9 @@ fun TimelineView(
                             topDp = VIDEO_FX_BAR_TOP_DP.dp,
                             barColor = fxColor,
                             isSelected = false,
-                            onTap = { /* R6 후속 — 효과 편집 시트 */ },
-                            onResize = { _, _ -> /* 비활성 */ },
-                            onTranslate = { /* 비활성 */ },
+                            onTap = { onVideoFxTap(bar.id) },
+                            onResize = { s, e -> onVideoFxResize(bar.id, s, e) },
+                            onTranslate = { d -> onVideoFxTranslate(bar.id, d) },
                         )
                     }
                 }
