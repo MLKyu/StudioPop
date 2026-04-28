@@ -122,6 +122,14 @@ class VideoEditor(
          * 그대로. 트랙이 들어오면 [DuckingAudioProcessor] 로 시간 가변 볼륨 적용.
          */
         bgmDuckingTrack: com.mingeek.studiopop.data.keyframe.KeyframeTrack<Float>? = null,
+        /**
+         * R6: 적용할 컬러 LUT id (예: BuiltinLuts.CINEMATIC.id). null/미등록 이면 LUT 미적용.
+         * [SyntheticCubeLuts] 가 코드로 5종 큐브를 만들어 [LutColorEffect] 가 Media3
+         * SingleColorLut 으로 변환 — 영상의 색감이 자막/오버레이 합성 전 원본 픽셀에 적용됨.
+         */
+        lutId: String? = null,
+        /** 0..1. LUT 강도 — 1=완전 적용, 0=원본. null 이면 1f. */
+        lutIntensity: Float = 1f,
     ): Result<File> = withContext(Dispatchers.Main) {
         runCatching {
             val effective = timeline.effectiveSegments()
@@ -216,7 +224,11 @@ class VideoEditor(
                 readFrameSize(effective.first().sourceUri)
             } ?: DEFAULT_FRAME_SIZE
             val overlays = buildOverlayList(timeline, frameW, frameH)
+            // LUT 은 자막/오버레이 합성 전 raw 영상 픽셀에 먼저 적용되어야 함 (오버레이 색까지
+            // 톤이 변하면 가독성 저하). 그래서 effect 체인 가장 앞에 둠.
+            val lutEffect = LutColorEffect.forLutId(lutId, lutIntensity)
             val videoEffects = ImmutableList.Builder<Effect>().apply {
+                lutEffect?.let { add(it) }
                 aspectRatio?.let {
                     add(
                         Presentation.createForAspectRatio(

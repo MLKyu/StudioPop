@@ -77,6 +77,22 @@ fun TimelineView(
      * prefix + 강조 색으로 표시되어, 시트를 닫고도 어떤 자막이 효과가 켜져 있는지 한눈에 확인 가능.
      */
     effectiveCaptionIds: Set<String> = emptySet(),
+    /**
+     * R6: 영상 효과 시각화 — VIDEO_FX 카테고리 EffectInstance 들을 막대로 그림.
+     * 자막/SFX 와 동일한 좌표 체계(source ms) 를 따라 timeline.mapSourceToOutput 으로 변환.
+     * 비어 있으면 lane 자체가 화면을 차지하지 않음 (no-op).
+     */
+    videoFxBars: List<TimelineFxBar> = emptyList(),
+    /**
+     * R6: 전환이 켜진 세그먼트 경계의 출력 ms 목록. 비어 있으면 글리프 미표시.
+     * 각 ms 위치 위쪽(텍스트 레이어 바보다 위)에 ▶◀ 페이드 글리프가 그려짐.
+     */
+    transitionBoundaryMs: List<Long> = emptyList(),
+    /**
+     * R6: 적용 중인 LUT 의 표시 이름. null/empty 면 lane 미표시. 선택된 채널 톤 테마의
+     * lutId 를 EditorScreen 이 displayName 으로 변환해 넘겨줌.
+     */
+    lutLabel: String? = null,
     onCaptionTap: (String) -> Unit,
     onTextLayerTap: (String) -> Unit,
     onImageLayerTap: (String) -> Unit = {},
@@ -280,6 +296,75 @@ fun TimelineView(
                         onResize = { s, _ -> onSfxTranslate(clip.id, s) },
                         onTranslate = { d -> onSfxTranslate(clip.id, d) },
                     )
+                }
+            }
+
+            // 8) VIDEO_FX 레인 — Ken Burns / Zoom Punch / Speed Ramp 등.
+            //    탭/리사이즈/이동은 R6 후속 작업 (현재는 시각 표시만).
+            if (videoFxBars.isNotEmpty()) {
+                Box(modifier = Modifier.fillMaxHeight()) {
+                    val fxColor = Color(0xFF42A5F5).copy(alpha = 0.85f)
+                    videoFxBars.forEach { bar ->
+                        OverlayBar(
+                            id = bar.id,
+                            text = "🎬 ${bar.label}",
+                            sourceStartMs = bar.sourceStartMs,
+                            sourceEndMs = bar.sourceEndMs,
+                            timeline = timeline,
+                            pxPerMs = pxPerMs,
+                            topDp = VIDEO_FX_BAR_TOP_DP.dp,
+                            barColor = fxColor,
+                            isSelected = false,
+                            onTap = { /* R6 후속 — 효과 편집 시트 */ },
+                            onResize = { _, _ -> /* 비활성 */ },
+                            onTranslate = { /* 비활성 */ },
+                        )
+                    }
+                }
+            }
+
+            // 9) LUT 인디케이터 — 풀폭 얇은 띠. 영상 전체에 적용되는 컬러 룩이라 timeline
+            //    좌우 끝까지 뻗는 게 의미적으로 정확. 라벨은 가운데 정렬.
+            if (!lutLabel.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = LUT_LANE_TOP_DP.dp, start = 0.dp)
+                        .height(LUT_LANE_HEIGHT_DP.dp)
+                        .width(totalWidthDp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color(0xFF7E57C2).copy(alpha = 0.55f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "🎨 $lutLabel",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        maxLines = 1,
+                    )
+                }
+            }
+
+            // 10) 전환 글리프 — 세그먼트 경계 위쪽에 작은 페이드 동그라미. transitions.enabled
+            //     일 때만 EditorScreen 이 ms 위치들을 채워 넘김.
+            if (transitionBoundaryMs.isNotEmpty()) {
+                transitionBoundaryMs.forEach { boundMs ->
+                    val centerDp = with(density) { (boundMs * pxPerMs).toDp() }
+                    val halfGlyph = (TRANSITION_GLYPH_DP / 2).dp
+                    val leftPaddingDp = if (centerDp > halfGlyph) centerDp - halfGlyph else 0.dp
+                    Box(
+                        modifier = Modifier
+                            .padding(start = leftPaddingDp, top = TRANSITION_GLYPH_TOP_DP.dp)
+                            .size(TRANSITION_GLYPH_DP.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFFC107).copy(alpha = 0.9f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "↔",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF263238),
+                        )
+                    }
                 }
             }
 
@@ -541,6 +626,17 @@ private fun ResizeHandle(
     )
 }
 
+/**
+ * R6 영상 효과 시각화 입력. EffectInstance 자체를 노출하지 않고 UI 가 필요한 만큼만 추려서
+ * 받음 (TimelineView 가 EffectRegistry/EditorScreen 에 결합되지 않게).
+ */
+data class TimelineFxBar(
+    val id: String,
+    val label: String,
+    val sourceStartMs: Long,
+    val sourceEndMs: Long,
+)
+
 private const val DEFAULT_PX_PER_MS = 0.15f // 1초 = 150px
 /**
  * 세로 모드 기본 높이. 썸네일 + 7개 레인(텍스트/자막/삭제/짤/모자이크/SFX/예비) 수용.
@@ -560,5 +656,11 @@ private const val CUT_BAR_TOP_DP = 56            // 삭제 범위
 private const val STICKER_BAR_TOP_DP = 82        // 짤(ImageLayer)
 private const val MOSAIC_BAR_TOP_DP = 108        // 모자이크
 private const val SFX_BAR_TOP_DP = 134           // 효과음
+private const val VIDEO_FX_BAR_TOP_DP = 160      // 영상 효과 (Ken Burns, Zoom Punch …)
+private const val LUT_LANE_TOP_DP = 184          // LUT (영상 전체 색감)
+private const val LUT_LANE_HEIGHT_DP = 16
+/** 전환 글리프 (세그먼트 경계 최상단, 텍스트 레이어 바와 살짝 겹쳐도 OK — 시각 강조용). */
+private const val TRANSITION_GLYPH_TOP_DP = 2
+private const val TRANSITION_GLYPH_DP = 14
 /** 마우스 휠 1 노치당 가로 스크롤 픽셀 배수. 너무 작으면 한참 돌려야 하고 너무 크면 급이동. */
 private const val WHEEL_SCROLL_FACTOR = 60f
