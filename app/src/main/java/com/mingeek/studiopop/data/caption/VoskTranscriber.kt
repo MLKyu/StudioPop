@@ -126,6 +126,14 @@ class VoskTranscriber(
                 startMs = (first.start * 1000).toLong(),
                 endMs = (last.end * 1000).toLong(),
                 text = bucket.joinToString(" ") { it.word },
+                words = bucket.map { w ->
+                    CueWord(
+                        word = w.word,
+                        startMs = (w.start * 1000).toLong(),
+                        endMs = (w.end * 1000).toLong(),
+                        confidence = w.conf.toFloat().coerceIn(0f, 1f),
+                    )
+                },
             )
             bucket = mutableListOf()
         }

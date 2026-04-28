@@ -4,12 +4,30 @@ package com.mingeek.studiopop.data.caption
  * 하나의 자막 큐.
  * @param startMs 시작 시각 (밀리초)
  * @param endMs 종료 시각 (밀리초)
+ * @param words 단어 단위 시간 정보. STT 엔진(Vosk, whisper.cpp) 이 word-level 출력을 지원하면
+ *              채워지고, 그렇지 않으면 null. 카라오케 자막·강조어 폭탄자막에서 활용한다.
+ *              SRT 직렬화에는 포함되지 않으며 (W3C SRT 표준에 word timing 없음), in-memory
+ *              에서만 살아남는다.
  */
 data class Cue(
     val index: Int,
     val startMs: Long,
     val endMs: Long,
     val text: String,
+    val words: List<CueWord>? = null,
+)
+
+/**
+ * 한 단어의 시간 범위. ms 기준 (Cue 와 동일 단위) — 엔진별 raw 단위(Vosk: seconds Double,
+ * whisper.cpp: ms Long) 는 변환 후 저장된다.
+ *
+ * @param confidence 0..1 사이 신뢰도. 엔진이 제공하지 않으면 1.0.
+ */
+data class CueWord(
+    val word: String,
+    val startMs: Long,
+    val endMs: Long,
+    val confidence: Float = 1f,
 )
 
 object Srt {

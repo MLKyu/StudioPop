@@ -42,6 +42,13 @@ fun AudioMixSheet(
     onBgmReplaceOriginal: (Boolean) -> Unit,
     onExtractVocals: () -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * R5d: 자동 더킹 — 보이스 위 BGM 자동 -6dB. true 면 export 시 적용.
+     * audioReady 가 false 면 라우드니스 분석이 아직 안 끝나 효과 없음 (분석 진행 중 표시).
+     */
+    autoDuckingEnabled: Boolean = false,
+    onAutoDuckingChange: (Boolean) -> Unit = {},
+    audioAnalysisReady: Boolean = false,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -199,6 +206,34 @@ fun AudioMixSheet(
                             Switch(
                                 checked = track.replaceOriginal,
                                 onCheckedChange = onBgmReplaceOriginal,
+                            )
+                        }
+                    }
+
+                    // R5d: 자동 더킹 토글 — 영상 음성 위에서 BGM 자동 -6dB. export 적용.
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "🎚️ 자동 더킹 (음성 위 BGM 자동 -6dB)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                val sub = if (audioAnalysisReady) {
+                                    "내보내기에만 적용 — 미리보기는 단일 볼륨"
+                                } else "오디오 라우드니스 분석 중… 분석 후 동작"
+                                Text(
+                                    sub,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = autoDuckingEnabled,
+                                onCheckedChange = onAutoDuckingChange,
+                                enabled = audioAnalysisReady,
                             )
                         }
                     }

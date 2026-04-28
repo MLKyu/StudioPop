@@ -117,6 +117,11 @@ class VideoEditor(
         timeline: Timeline,
         aspectRatio: Float? = null,
         onProgress: (Float) -> Unit = {},
+        /**
+         * R5c3b: BGM 자동 더킹 KeyframeTrack. 비거나 null 이면 기존 단일 볼륨([VolumeAudioProcessor])
+         * 그대로. 트랙이 들어오면 [DuckingAudioProcessor] 로 시간 가변 볼륨 적용.
+         */
+        bgmDuckingTrack: com.mingeek.studiopop.data.keyframe.KeyframeTrack<Float>? = null,
     ): Result<File> = withContext(Dispatchers.Main) {
         runCatching {
             val effective = timeline.effectiveSegments()
@@ -163,10 +168,19 @@ class VideoEditor(
                 val bgmBuilder = EditedMediaItem.Builder(
                     MediaItem.fromUri(track.uri)
                 ).setRemoveVideo(true)
-                if (kotlin.math.abs(track.volume - 1f) > 0.001f) {
-                    bgmBuilder.setEffects(
-                        Effects(listOf(VolumeAudioProcessor(track.volume)), ImmutableList.of())
-                    )
+                // BGM 오디오 프로세서 체인: (자동 더킹) → (단일 볼륨 배율).
+                // 두 가지 모두 있을 수 있음 — 더킹은 음성 위에서 -6dB, 단일 볼륨은 사용자 슬라이더.
+                val bgmProcessors = buildList<androidx.media3.common.audio.AudioProcessor> {
+                    val duck = bgmDuckingTrack
+                    if (duck != null && !duck.isEmpty) {
+                        add(DuckingAudioProcessor(duck))
+                    }
+                    if (kotlin.math.abs(track.volume - 1f) > 0.001f) {
+                        add(VolumeAudioProcessor(track.volume))
+                    }
+                }
+                if (bgmProcessors.isNotEmpty()) {
+                    bgmBuilder.setEffects(Effects(bgmProcessors, ImmutableList.of()))
                 }
                 sequences += EditedMediaItemSequence(
                     listOf(bgmBuilder.build()),

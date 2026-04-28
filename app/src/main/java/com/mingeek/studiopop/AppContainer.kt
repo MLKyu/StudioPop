@@ -40,6 +40,29 @@ import com.mingeek.studiopop.data.thumbnail.GeminiThumbnailAdvisor
 import com.mingeek.studiopop.data.thumbnail.ThumbnailComposer
 import com.mingeek.studiopop.data.thumbnail.VariantGenerator
 import com.mingeek.studiopop.data.youtube.YouTubeUploader
+import com.mingeek.studiopop.data.ai.AiAssist
+import com.mingeek.studiopop.data.ai.DefaultAiAssist
+import com.mingeek.studiopop.data.ai.GeminiChapterPicker
+import com.mingeek.studiopop.data.ai.GeminiTagPicker
+import com.mingeek.studiopop.data.audio.AnalysisCache
+import com.mingeek.studiopop.data.audio.AudioAnalysisService
+import com.mingeek.studiopop.data.audio.BeatBus
+import com.mingeek.studiopop.data.audio.BeatDetector
+import com.mingeek.studiopop.data.audio.BeatDetectorImpl
+import com.mingeek.studiopop.data.audio.LoudnessAnalyzer
+import com.mingeek.studiopop.data.audio.LoudnessAnalyzerImpl
+import com.mingeek.studiopop.data.audio.WaveformSampler
+import com.mingeek.studiopop.data.audio.WaveformSamplerImpl
+import com.mingeek.studiopop.data.design.DesignTokens
+import com.mingeek.studiopop.data.design.registerBuiltinFontPacks
+import com.mingeek.studiopop.data.design.registerBuiltinLuts
+import com.mingeek.studiopop.data.design.registerBuiltinThemes
+import com.mingeek.studiopop.data.effects.EffectRegistry
+import com.mingeek.studiopop.data.effects.builtins.registerCaptionStylePresets
+import com.mingeek.studiopop.data.effects.builtins.registerIntroOutroPresets
+import com.mingeek.studiopop.data.effects.builtins.registerTransitionPresets
+import com.mingeek.studiopop.data.effects.builtins.registerVideoFxPresets
+import com.mingeek.studiopop.data.effects.registerBuiltins
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
@@ -216,6 +239,22 @@ class AppContainer(context: Context) {
         )
     }
 
+    val geminiChapterPicker: GeminiChapterPicker by lazy {
+        GeminiChapterPicker(
+            client = okHttpClient,
+            moshi = moshi,
+            apiKeyProvider = { apiKeyStore.getGemini() },
+        )
+    }
+
+    val geminiTagPicker: GeminiTagPicker by lazy {
+        GeminiTagPicker(
+            client = okHttpClient,
+            moshi = moshi,
+            apiKeyProvider = { apiKeyStore.getGemini() },
+        )
+    }
+
     val faceDetector: FaceDetector by lazy { FaceDetector() }
 
     val variantGenerator: VariantGenerator by lazy {
@@ -250,6 +289,63 @@ class AppContainer(context: Context) {
     val stereoPcmDecoder: StereoPcmDecoder by lazy { StereoPcmDecoder(appContext) }
     val vocalSeparator: VocalSeparator by lazy {
         VocalSeparator(appContext, uvrModelManager, stereoPcmDecoder)
+    }
+
+    // --- 확장 골격 (R1) -------------------------------------------------------
+    // 새 효과·디자인·AI·오디오 분석·렌더 시스템의 단일 진입점들. 골격 단계라 효과 0개·자산 기본만
+    // 등록된 상태. R2 부터 effect/asset 등록이 일괄 추가됨.
+
+    val effectRegistry: EffectRegistry by lazy {
+        EffectRegistry().apply {
+            registerBuiltins()
+            // R2 builtin packs
+            registerCaptionStylePresets()
+            registerTransitionPresets()
+            // R3 builtin packs
+            registerVideoFxPresets()
+            // R5b builtin packs
+            registerIntroOutroPresets()
+        }
+    }
+
+    val designTokens: DesignTokens by lazy {
+        DesignTokens().apply {
+            // R2: placeholder 폰트 팩 8종 등록 (실제 ttf 는 자산 큐레이션 시)
+            registerBuiltinFontPacks()
+            // R3: LUT 5종 placeholder + 테마 5팩
+            registerBuiltinLuts()
+            registerBuiltinThemes()
+        }
+    }
+
+    val analysisCache: AnalysisCache by lazy { AnalysisCache() }
+
+    val beatBus: BeatBus by lazy { BeatBus() }
+
+    /** R4: jTransforms FFT + RMS 기반 실구현. */
+    val beatDetector: BeatDetector by lazy { BeatDetectorImpl(pcmDecoder) }
+    val loudnessAnalyzer: LoudnessAnalyzer by lazy { LoudnessAnalyzerImpl(pcmDecoder) }
+    val waveformSampler: WaveformSampler by lazy { WaveformSamplerImpl(pcmDecoder) }
+
+    val audioAnalysisService: AudioAnalysisService by lazy {
+        AudioAnalysisService(
+            beatDetector = beatDetector,
+            loudnessAnalyzer = loudnessAnalyzer,
+            waveformSampler = waveformSampler,
+            cache = analysisCache,
+        )
+    }
+
+    val aiAssist: AiAssist by lazy {
+        DefaultAiAssist(
+            variantGenerator = variantGenerator,
+            copywriter = geminiCopywriter,
+            highlightPicker = geminiHighlightPicker,
+            chapterPicker = geminiChapterPicker,
+            tagPicker = geminiTagPicker,
+            frameExtractor = frameExtractor,
+            faceDetector = faceDetector,
+        )
     }
 }
 
