@@ -1842,10 +1842,14 @@ class EditorViewModel(
             }
         } else null
 
-        // R6: 선택된 채널 톤 테마 → 합성 LUT(코드) 적용. theme 의 lutId 가 null 이면 LUT 없음.
-        // recommendedIntensity 는 LUT 자산 메타에서 — UI 슬라이더가 아직 없으니 추천값 그대로.
+        // R6: LUT 해석 우선순위 — effectStack 의 활성 LUT EffectInstance > selectedThemeId 의
+        // theme.lutId. effectStack 의 LUT 은 AI suggestEdits 가 추천한 것 또는 사용자가 명시적
+        // 으로 적용한 것으로, theme 보다 의도가 강하다고 보고 우선. 강도는 LUT 자산 메타의
+        // recommendedIntensity 사용.
         val theme = designTokens.theme(state.selectedThemeId)
-        val themeLutId = theme.lutId
+        val stackLutId = com.mingeek.studiopop.data.effects.EffectStackResolver
+            .resolveActiveLutId(state.effectStack)
+        val themeLutId = stackLutId ?: theme.lutId
         val themeLutIntensity = themeLutId
             ?.let { designTokens.lut(it)?.recommendedIntensity }
             ?: 1f
