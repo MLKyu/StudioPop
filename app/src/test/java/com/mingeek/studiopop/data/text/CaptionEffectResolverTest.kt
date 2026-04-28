@@ -103,6 +103,31 @@ class CaptionEffectResolverTest {
     }
 
     @Test
+    fun `karaoke uses real words when present`() {
+        val (reg, tokens, captions) = setup()
+        val realWords = listOf(
+            com.mingeek.studiopop.data.caption.CueWord("hi", 100L, 400L),
+        )
+        val out = CaptionEffectResolver.resolveEffectiveCaptions(
+            captions = captions,
+            captionEffectIds = mapOf("c1" to CaptionStylePresets.GLOW_NEON),
+            effectRegistry = reg,
+            designTokens = tokens,
+            themeId = "studiopop.default",
+            captionKaraokeIds = setOf("c1"),
+            captionWords = mapOf("c1" to realWords),
+        )
+        assertEquals(1, out.size)
+        val timing = out.single().timing
+        assertTrue(timing is TextTiming.FromWordTimestamps)
+        val words = (timing as TextTiming.FromWordTimestamps).words
+        // 실 STT 시간이 fake (0..1000 균등) 가 아닌 100..400 으로 들어가야 함
+        assertEquals(1, words.size)
+        assertEquals(100L, words.first().startMs)
+        assertEquals(400L, words.first().endMs)
+    }
+
+    @Test
     fun `karaoke ids attach FromWordTimestamps timing with fake words`() {
         val (reg, tokens, captions) = setup()
         val out = CaptionEffectResolver.resolveEffectiveCaptions(

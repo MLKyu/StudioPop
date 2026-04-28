@@ -19,7 +19,9 @@ import com.mingeek.studiopop.data.ai.YoutubePackage
 import com.mingeek.studiopop.data.audio.AudioAnalysis
 import com.mingeek.studiopop.data.audio.AudioAnalysisService
 import com.mingeek.studiopop.data.audio.Ducking
+import com.mingeek.studiopop.data.caption.CaptionWordStore
 import com.mingeek.studiopop.data.caption.Cue
+import com.mingeek.studiopop.data.caption.CueWord
 import com.mingeek.studiopop.data.caption.Srt
 import com.mingeek.studiopop.data.effects.EffectInstance
 import com.mingeek.studiopop.data.effects.EffectStack
@@ -167,6 +169,12 @@ data class EditorUiState(
      */
     val captionKaraokeIds: Set<String> = emptySet(),
     /**
+     * R5c3a 후속: 자막 id → 실 STT word timing. CaptionWordStore 에서 첫 segment uri 매칭으로
+     * 채워짐. 비어 있으면 카라오케는 fakeWordTimings fallback. SRT 직접 import / 사용자 직접
+     * 입력 자막은 비어 있다.
+     */
+    val captionWords: Map<String, List<CueWord>> = emptyMap(),
+    /**
      * R5c1: AI 패키지 생성 결과 — null 이면 미생성. 사용자가 시트를 닫아도 결과는 유지되고,
      * 다시 보기 가능.
      */
@@ -216,6 +224,7 @@ class EditorViewModel(
     private val aiAssist: AiAssist,
     private val frameExtractor: FrameExtractor,
     private val thumbnailComposer: ThumbnailComposer,
+    private val captionWordStore: CaptionWordStore,
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(EditorUiState())
@@ -532,6 +541,7 @@ class EditorViewModel(
                 captionEffectIds = emptyMap(),
                 captionBeatSyncIds = emptySet(),
                 captionKaraokeIds = emptySet(),
+                captionWords = emptyMap(),
                 audioAnalysis = null,
                 isAnalyzingAudio = false,
                 youtubePackage = null,
@@ -582,6 +592,16 @@ class EditorViewModel(
                 text = it.text,
             )
         }
+        // 첫 segment uri 가 있으면 CaptionWordStore 에서 매칭되는 word 를 자막별로 추출 — 카라오케
+        // 가 실제 발화 속도로 동작하도록. store 가 비어 있거나 다른 영상이면 빈 맵 → fakeWordTimings
+        // fallback.
+        val firstUri = _uiState.value.timeline.segments.firstOrNull()?.sourceUri
+        val captionWords: Map<String, List<CueWord>> = if (firstUri != null) {
+            timelineCaptions.associate { c ->
+                c.id to captionWordStore.wordsInRange(firstUri, c.sourceStartMs, c.sourceEndMs)
+            }.filterValues { it.isNotEmpty() }
+        } else emptyMap()
+
         // 새 자막 UUID 가 발급되므로 이전 캡션에 매핑된 효과/펄스/카라오케는 dangling — 정리.
         _uiState.update { state ->
             state.copy(
@@ -589,6 +609,7 @@ class EditorViewModel(
                 captionEffectIds = emptyMap(),
                 captionBeatSyncIds = emptySet(),
                 captionKaraokeIds = emptySet(),
+                captionWords = captionWords,
             )
         }
     }
@@ -872,6 +893,9 @@ class EditorViewModel(
                 captionKaraokeIds = if (kind == EditKind.CAPTION)
                     it.captionKaraokeIds - id
                 else it.captionKaraokeIds,
+                captionWords = if (kind == EditKind.CAPTION)
+                    it.captionWords - id
+                else it.captionWords,
             )
         }
     }
@@ -1758,6 +1782,7 @@ class EditorViewModel(
                     aiAssist = app.container.aiAssist,
                     frameExtractor = app.container.frameExtractor,
                     thumbnailComposer = app.container.thumbnailComposer,
+                    captionWordStore = app.container.captionWordStore,
                 )
             }
         }

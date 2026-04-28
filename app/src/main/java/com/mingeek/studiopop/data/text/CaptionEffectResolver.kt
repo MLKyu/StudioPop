@@ -1,5 +1,6 @@
 package com.mingeek.studiopop.data.text
 
+import com.mingeek.studiopop.data.caption.CueWord
 import com.mingeek.studiopop.data.design.DesignTokens
 import com.mingeek.studiopop.data.editor.TimelineCaption
 import com.mingeek.studiopop.data.effects.EffectParamValues
@@ -29,6 +30,7 @@ object CaptionEffectResolver {
         themeId: String,
         captionBeatSyncIds: Set<String> = emptySet(),
         captionKaraokeIds: Set<String> = emptySet(),
+        captionWords: Map<String, List<CueWord>> = emptyMap(),
     ): List<RichTextElement> {
         if (captions.isEmpty() || captionEffectIds.isEmpty()) return emptyList()
         val theme = designTokens.theme(themeId)
@@ -48,10 +50,19 @@ object CaptionEffectResolver {
             val beatSync = c.id in captionBeatSyncIds
             val karaokeOn = c.id in captionKaraokeIds
             val timing: TextTiming = if (karaokeOn) {
+                // 실 STT word timing 우선 — 없으면 시간비례 fake 로 fallback.
+                val realWords = captionWords[c.id]
+                val wordTimings: List<WordTiming> = if (!realWords.isNullOrEmpty()) {
+                    realWords.map {
+                        WordTiming(word = it.word, startMs = it.startMs, endMs = it.endMs)
+                    }
+                } else {
+                    fakeWordTimings(c.text, c.sourceStartMs, c.sourceEndMs)
+                }
                 TextTiming.FromWordTimestamps(
                     sourceStartMs = c.sourceStartMs,
                     sourceEndMs = c.sourceEndMs,
-                    words = fakeWordTimings(c.text, c.sourceStartMs, c.sourceEndMs),
+                    words = wordTimings,
                 )
             } else {
                 TextTiming.Manual(c.sourceStartMs, c.sourceEndMs)

@@ -6,6 +6,7 @@ import com.mingeek.studiopop.data.auth.GoogleAuthManager
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.data.caption.AudioChunker
 import com.mingeek.studiopop.data.caption.AudioExtractor
+import com.mingeek.studiopop.data.caption.CaptionWordStore
 import com.mingeek.studiopop.data.caption.ChunkedTranscriber
 import com.mingeek.studiopop.data.caption.PcmDecoder
 import com.mingeek.studiopop.data.caption.SpeechToText
@@ -294,6 +295,12 @@ class AppContainer(context: Context) {
     // --- 확장 골격 (R1) -------------------------------------------------------
     // 새 효과·디자인·AI·오디오 분석·렌더 시스템의 단일 진입점들. 골격 단계라 효과 0개·자산 기본만
     // 등록된 상태. R2 부터 effect/asset 등록이 일괄 추가됨.
+
+    /**
+     * R5c3a 후속: STT word-level 결과를 SRT 파일에 저장될 때 손실되지 않도록 세션 메모리에 보관.
+     * CaptionViewModel 이 채우고 EditorViewModel 이 자막 시간 범위로 매칭해 카라오케에 사용.
+     */
+    val captionWordStore: CaptionWordStore by lazy { CaptionWordStore() }
 
     val effectRegistry: EffectRegistry by lazy {
         EffectRegistry().apply {

@@ -381,6 +381,7 @@ fun EditorScreen(
                             state.captionEffectIds,
                             state.captionBeatSyncIds,
                             state.captionKaraokeIds,
+                            state.captionWords,
                         ) {
                             CaptionEffectResolver.resolveEffectiveCaptions(
                                 captions = state.timeline.captions,
@@ -390,6 +391,7 @@ fun EditorScreen(
                                 themeId = "studiopop.default",
                                 captionBeatSyncIds = state.captionBeatSyncIds,
                                 captionKaraokeIds = state.captionKaraokeIds,
+                                captionWords = state.captionWords,
                             )
                         }
                         // 새 자막 효과 렌더 — currentSourceMs 기준으로 시간 매칭
