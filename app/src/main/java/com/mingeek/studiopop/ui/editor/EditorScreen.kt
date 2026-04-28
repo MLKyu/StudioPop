@@ -101,6 +101,7 @@ import com.mingeek.studiopop.ui.editor.components.PreviewPlayer
 import com.mingeek.studiopop.ui.editor.components.PreviewStickerOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewTransitionOverlay
 import com.mingeek.studiopop.ui.editor.components.SfxPreviewPlayer
+import com.mingeek.studiopop.ui.editor.components.TimelineFxBar
 import com.mingeek.studiopop.ui.editor.components.TimelineView
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -508,6 +509,49 @@ fun EditorScreen(
                     },
                 )
 
+                // R6 시각화: 영상 효과 lane(VIDEO_FX) / 전환 글리프 / LUT pill 입력 데이터 조립.
+                // EffectRegistry 와 DesignTokens 는 AppContainer 단일 인스턴스라 매 컴포지션 비용 낮음.
+                val videoFxBars = remember(state.effectStack) {
+                    state.effectStack.instances
+                        .filter { it.enabled }
+                        .mapNotNull { inst ->
+                            val def = container.effectRegistry.get(inst.definitionId)
+                                ?: return@mapNotNull null
+                            if (def.category != com.mingeek.studiopop.data.effects.EffectCategory.VIDEO_FX) {
+                                return@mapNotNull null
+                            }
+                            // point 효과(같은 시각 시작·종료)는 시각적으로 거의 안 보이므로
+                            // 최소 1프레임(약 33ms) 폭을 부여해 사용자가 인지 가능하도록 함.
+                            val end = if (inst.sourceEndMs > inst.sourceStartMs) inst.sourceEndMs
+                                else inst.sourceStartMs + 33L
+                            TimelineFxBar(
+                                id = inst.id,
+                                label = def.displayName,
+                                sourceStartMs = inst.sourceStartMs,
+                                sourceEndMs = end,
+                            )
+                        }
+                }
+                // 전환 활성 시 raw 세그먼트 사이 경계의 출력 ms 위치 (마지막 세그먼트 뒤는 제외).
+                val transitionBoundaryMs = remember(
+                    state.timeline.segments, state.timeline.transitions.enabled,
+                ) {
+                    if (!state.timeline.transitions.enabled) emptyList()
+                    else {
+                        val list = mutableListOf<Long>()
+                        var acc = 0L
+                        state.timeline.segments.dropLast(1).forEach { seg ->
+                            acc += seg.durationMs
+                            list += acc
+                        }
+                        list
+                    }
+                }
+                val lutLabel: String? = remember(state.selectedThemeId) {
+                    val theme = container.designTokens.theme(state.selectedThemeId)
+                    theme.lutId?.let { container.designTokens.lut(it)?.displayName }
+                }
+
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -521,6 +565,9 @@ fun EditorScreen(
                         selectedImageLayerId = state.selectedImageLayerId,
                         selectedMosaicId = state.selectedMosaicId,
                         effectiveCaptionIds = state.captionEffectIds.keys,
+                        videoFxBars = videoFxBars,
+                        transitionBoundaryMs = transitionBoundaryMs,
+                        lutLabel = lutLabel,
                         onCaptionTap = viewModel::openCaptionEditorFor,
                         onTextLayerTap = viewModel::openTextLayerEditorFor,
                         onImageLayerTap = viewModel::selectImageLayer,
