@@ -1147,9 +1147,13 @@ class EditorViewModel(
 
     /**
      * R6 폴리시: 단일 제안을 인덱스로 적용. 같은 인덱스 재호출은 무시 (이미 적용됨).
-     * 적용 종류는 [EditSuggestion] 종류에 따라 분기 — AddCaption 은 Timeline 에 자막 추가,
-     * AddEffect 는 effectStack 에 instance 추가. 다른 종류(AddCut/AddSfx/ApplyTheme) 는 R6+
-     * 에서 처리.
+     * 모든 [EditSuggestion] 종류 처리:
+     *  - AddCaption → [Timeline.addCaption]
+     *  - AddEffect → [effectStack].add
+     *  - AddCut → 첫 세그먼트 sourceUri 기준 [Timeline.addCutRange]
+     *  - AddSfx → designTokens.sfx 로 자산 해석 후 [Timeline.addSfxClip]
+     *  - ApplyTheme → [setSelectedTheme]
+     * 자산이 없거나 sourceUri 미해석이면 noop (마킹도 안 함 — UI 가 disabled 로 가드).
      */
     fun applySuggestionAt(index: Int) {
         val state = _uiState.value
@@ -1184,19 +1188,80 @@ class EditorViewModel(
                     )
                 }
             }
-            // AddCut/AddSfx/ApplyTheme 는 R6+ 미지원 — 적용 무시. UI 가 사전에 disabled 라
-            // 호출 자체가 안 들어와야 정상이지만 방어적으로 noop.
-            else -> Unit
+            is EditSuggestion.AddCut -> {
+                // CutRange 는 sourceUri 기준 — AI 제안엔 uri 가 없으므로 첫 세그먼트(메인 영상)
+                // 기준으로 적용. 영상 미로딩 상태면 noop.
+                val sourceUri = state.timeline.segments.firstOrNull()?.sourceUri ?: return
+                val cut = com.mingeek.studiopop.data.editor.CutRange(
+                    sourceUri = sourceUri,
+                    sourceStartMs = s.sourceStartMs,
+                    sourceEndMs = s.sourceEndMs,
+                )
+                _uiState.update {
+                    it.copy(
+                        timeline = it.timeline.addCutRange(cut),
+                        appliedSuggestionIndices = it.appliedSuggestionIndices + index,
+                    )
+                }
+            }
+            is EditSuggestion.AddSfx -> {
+                val asset = designTokens.sfx(s.sfxAssetId) ?: return
+                val uri = resolveAssetSourceToUri(asset.source) ?: return
+                val durationMs = if (asset.durationMs > 0) asset.durationMs
+                    else DEFAULT_SFX_DURATION_MS
+                val clip = com.mingeek.studiopop.data.editor.SfxClip(
+                    sourceStartMs = s.sourceStartMs,
+                    sourceEndMs = s.sourceStartMs + durationMs,
+                    audioUri = uri,
+                    label = asset.displayName,
+                )
+                _uiState.update {
+                    it.copy(
+                        timeline = it.timeline.addSfxClip(clip),
+                        appliedSuggestionIndices = it.appliedSuggestionIndices + index,
+                    )
+                }
+            }
+            is EditSuggestion.ApplyTheme -> {
+                // 등록 안 된 테마면 designTokens.theme() 가 default 로 fallback 하므로
+                // 명시적 존재 확인 후에만 적용.
+                val exists = designTokens.allThemes().any { it.id == s.themeId }
+                if (!exists) return
+                _uiState.update {
+                    it.copy(
+                        selectedThemeId = s.themeId,
+                        appliedSuggestionIndices = it.appliedSuggestionIndices + index,
+                    )
+                }
+            }
         }
     }
 
     /**
-     * R6 폴리시 보조: 시트 UI 가 미지원 종류를 "예정" 으로 표시할 수 있게 헬퍼.
+     * R6 폴리시 보조: 시트 UI 가 미지원/미해결 자산을 사전에 disabled 표시할 수 있게.
+     * 자산 화이트리스트(sfx/theme) 검사 포함 — Gemini 가 임의 id 를 내놓아도 깨지지 않도록.
      */
     fun isSuggestionSupported(suggestion: EditSuggestion): Boolean = when (suggestion) {
         is EditSuggestion.AddCaption -> true
         is EditSuggestion.AddEffect -> true
-        else -> false
+        is EditSuggestion.AddCut ->
+            _uiState.value.timeline.segments.isNotEmpty()
+        is EditSuggestion.AddSfx -> {
+            val asset = designTokens.sfx(suggestion.sfxAssetId)
+            asset != null && resolveAssetSourceToUri(asset.source) != null
+        }
+        is EditSuggestion.ApplyTheme ->
+            designTokens.allThemes().any { it.id == suggestion.themeId }
+    }
+
+    private fun resolveAssetSourceToUri(
+        source: com.mingeek.studiopop.data.design.AssetSource,
+    ): Uri? = when (source) {
+        is com.mingeek.studiopop.data.design.AssetSource.Bundled ->
+            Uri.parse("file:///android_asset/${source.assetPath}")
+        is com.mingeek.studiopop.data.design.AssetSource.UserImported -> source.uri
+        // Remote 는 다운로드/캐시 인프라 미구현 — 추후 Phase 에서.
+        is com.mingeek.studiopop.data.design.AssetSource.Remote -> null
     }
 
     /**
