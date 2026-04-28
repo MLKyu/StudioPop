@@ -39,7 +39,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Animation
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -48,8 +50,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +64,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -73,8 +78,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
+import com.mingeek.studiopop.StudioPopApp
+import com.mingeek.studiopop.data.ai.EditSuggestion
 import com.mingeek.studiopop.data.editor.TransitionKind
 import com.mingeek.studiopop.data.library.LibraryAssetKind
+import com.mingeek.studiopop.data.text.CaptionEffectResolver
+import com.mingeek.studiopop.ui.editor.components.AiPackageSheet
+import com.mingeek.studiopop.ui.editor.components.ThemeSelectorSheet
+import com.mingeek.studiopop.ui.text.PreviewBeatBusBinder
+import com.mingeek.studiopop.ui.text.RichTextOverlay
 import com.mingeek.studiopop.ui.common.ProjectQuickLoadCard
 import com.mingeek.studiopop.ui.editor.components.AudioMixSheet
 import com.mingeek.studiopop.ui.editor.components.CaptionEditorSheet
@@ -103,6 +115,29 @@ fun EditorScreen(
     val state by viewModel.uiState.collectAsState()
     LaunchedEffect(projectId) { viewModel.bindProject(projectId) }
 
+    // R3.5: 자막 효과 시스템 컨테이너. effectRegistry / designTokens 는 앱 전역 단일 인스턴스
+    // 라 매 컴포지션마다 새로 만드는 비용 없이 그냥 참조만.
+    val appContext = LocalContext.current.applicationContext
+    val container = (appContext as StudioPopApp).container
+
+    // R6: typefaceProvider 람다를 remember 로 안정화 — 매 컴포지션마다 새 인스턴스로 생성되면
+    // RichTextRenderer 의 measure 가 재실행돼 Paint 캐시가 무효해짐 (재생 중 60fps recompose
+    // 가 도는 자막 영역에선 큰 회귀). container 가 같은 동안엔 같은 람다 재사용.
+    val typefaceProvider = remember(container) {
+        { fontPackId: String, weight: Int ->
+            container.typefaceLoader.typeface(
+                container.designTokens.fontPack(fontPackId),
+                defaultWeight = weight,
+            )
+        }
+    }
+
+    // R4.5: 첫 segment 의 sourceUri 가 바뀌면 오디오 분석 자동 트리거. 캐시 hit 면 ViewModel
+    // 안에서 즉시 반환.
+    LaunchedEffect(state.timeline.segments.firstOrNull()?.sourceUri) {
+        viewModel.analyzeFirstSegmentAudio()
+    }
+
     val pickVideoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri -> viewModel.onVideoSelected(uri) }
@@ -117,6 +152,13 @@ fun EditorScreen(
 
     // 프리뷰 빈 영역 탭 → TopAppBar 숨김/노출 토글. 편집 중 더 많은 화면 공간 확보용.
     var toolbarVisible by remember { mutableStateOf(true) }
+
+    // R5c1: AI 패키지 주제 입력 다이얼로그
+    var showAiTopicDialog by remember { mutableStateOf(false) }
+    var aiTopicInput by remember { mutableStateOf("") }
+
+    // R6: 채널 테마 선택 시트
+    var showThemeSheet by remember { mutableStateOf(false) }
 
     // DeX 키보드 shortcut — 편집기 진입 시 focus 잡아 Space/Arrow/Ctrl+E/Esc/Delete 처리.
     val keyFocus = remember { FocusRequester() }
@@ -187,6 +229,50 @@ fun EditorScreen(
                         }
                     },
                     actions = {
+                        // R5c1: AI 패키지 — 영상이 있을 때만 활성. 진행 중이면 spinner.
+                        val aiPhase = state.aiPackagePhase
+                        val aiInProgress = aiPhase is AiPackagePhase.Analyzing ||
+                            aiPhase is AiPackagePhase.Generating
+                        // R5d: 효과/자막 적용 카운트를 라벨에 노출 — 사용자가 어떤 AI 변경이
+                        // 적용 됐는지 한눈에 알 수 있게.
+                        val appliedEffects = state.effectStack.instances.size
+                        val appliedCaptionStyles = state.captionEffectIds.size
+                        val appliedTotal = appliedEffects + appliedCaptionStyles
+                        val appliedSuffix = if (appliedTotal > 0) " (✨$appliedTotal)" else ""
+                        val aiButtonLabel = when {
+                            aiPhase is AiPackagePhase.Analyzing -> "분석 중…"
+                            aiPhase is AiPackagePhase.Generating -> "생성 중…"
+                            state.youtubePackage != null -> "✨ AI 결과 다시 보기$appliedSuffix"
+                            else -> "✨ AI 패키지$appliedSuffix"
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                if (state.youtubePackage != null && !aiInProgress) {
+                                    viewModel.reopenAiPackageSheet()
+                                } else if (!aiInProgress) {
+                                    showAiTopicDialog = true
+                                }
+                            },
+                            enabled = state.hasVideo && !aiInProgress,
+                            modifier = Modifier.padding(end = 4.dp),
+                        ) {
+                            if (aiInProgress) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.padding(end = 6.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            }
+                            Text(aiButtonLabel)
+                        }
+                        // R6: 채널 테마 — 자막 톤·폰트 일괄 변경
+                        OutlinedButton(
+                            onClick = { showThemeSheet = true },
+                            enabled = state.hasVideo,
+                            modifier = Modifier.padding(end = 4.dp),
+                        ) {
+                            val current = container.designTokens.theme(state.selectedThemeId)
+                            Text("🎨 ${current.displayName}")
+                        }
                         OutlinedButton(
                             onClick = viewModel::startExport,
                             enabled = state.canExport,
@@ -312,12 +398,51 @@ fun EditorScreen(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
+                        // R3.5: 효과 적용된 자막은 새 RichTextOverlay 가 담당, 그 외는 기존 경로.
+                        // 두 오버레이가 같은 자막을 그리지 않도록 effectIds 키 집합으로 분기.
+                        val effectiveCaptionIds = state.captionEffectIds.keys
+                        val richElements = remember(
+                            state.timeline.captions,
+                            state.captionEffectIds,
+                            state.captionBeatSyncIds,
+                            state.captionKaraokeIds,
+                            state.captionWords,
+                        ) {
+                            CaptionEffectResolver.resolveEffectiveCaptions(
+                                captions = state.timeline.captions,
+                                captionEffectIds = state.captionEffectIds,
+                                effectRegistry = container.effectRegistry,
+                                designTokens = container.designTokens,
+                                themeId = state.selectedThemeId,
+                                captionBeatSyncIds = state.captionBeatSyncIds,
+                                captionKaraokeIds = state.captionKaraokeIds,
+                                captionWords = state.captionWords,
+                            )
+                        }
+                        // 새 자막 효과 렌더 — currentSourceMs 기준으로 시간 매칭
+                        val sourceTimeMs = state.timeline.mapOutputToSource(state.playheadOutputMs)
+                            ?.second ?: state.playheadOutputMs
+                        // R4.5: 비트 분석 결과가 있으면 BeatBus 에 onset 시점마다 emit.
+                        // beats == null 이면 NOOP — 분석 진행 중/실패 시 펄스만 비활성화.
+                        PreviewBeatBusBinder(
+                            beats = state.audioAnalysis?.beats,
+                            currentSourceMs = sourceTimeMs,
+                            beatBus = container.beatBus,
+                        )
+                        RichTextOverlay(
+                            elements = richElements,
+                            currentSourceMs = sourceTimeMs,
+                            modifier = Modifier.fillMaxSize(),
+                            beatBus = container.beatBus,
+                            typefaceProvider = typefaceProvider,
+                        )
                         PreviewCaptionOverlay(
                             timeline = state.timeline,
                             currentOutputMs = state.playheadOutputMs,
                             onCaptionAnchorChange = viewModel::onCaptionAnchorChange,
                             onTextLayerAnchorChange = viewModel::onTextLayerAnchorChange,
                             modifier = Modifier.fillMaxSize(),
+                            excludeCaptionIds = effectiveCaptionIds,
                         )
                         PreviewStickerOverlay(
                             timeline = state.timeline,
@@ -395,6 +520,7 @@ fun EditorScreen(
                         selectedCaptionId = state.editingItem?.id,
                         selectedImageLayerId = state.selectedImageLayerId,
                         selectedMosaicId = state.selectedMosaicId,
+                        effectiveCaptionIds = state.captionEffectIds.keys,
                         onCaptionTap = viewModel::openCaptionEditorFor,
                         onTextLayerTap = viewModel::openTextLayerEditorFor,
                         onImageLayerTap = viewModel::selectImageLayer,
@@ -446,12 +572,107 @@ fun EditorScreen(
     state.editingItem?.let { item ->
         val kind = state.editingKind ?: EditKind.CAPTION
         val title = if (kind == EditKind.CAPTION) "자막 편집" else "텍스트 레이어 편집"
+        // R3.5: 자막일 때만 효과 선택 노출 — 텍스트 레이어는 이번 라운드 스코프 밖.
+        val showEffectPicker = kind == EditKind.CAPTION
+        val currentEffectId = if (showEffectPicker) state.captionEffectIds[item.id] else null
+        val beatSyncEnabled = showEffectPicker && item.id in state.captionBeatSyncIds
+        val karaokeEnabled = showEffectPicker && item.id in state.captionKaraokeIds
         CaptionEditorSheet(
             item = item,
             title = title,
             onDismiss = viewModel::closeEditor,
             onSave = viewModel::saveEditingItem,
             onDelete = if (item.existsInTimeline) { { viewModel.deleteEditingItem() } } else null,
+            currentEffectId = currentEffectId,
+            onEffectChange = { effectId -> viewModel.setCaptionEffect(item.id, effectId) },
+            showEffectPicker = showEffectPicker,
+            beatSyncEnabled = beatSyncEnabled,
+            onBeatSyncChange = { enabled -> viewModel.setCaptionBeatSync(item.id, enabled) },
+            audioAnalyzing = state.isAnalyzingAudio,
+            karaokeEnabled = karaokeEnabled,
+            onKaraokeChange = { enabled -> viewModel.setCaptionKaraoke(item.id, enabled) },
+        )
+    }
+
+    // R5c1: AI 패키지 주제 입력 다이얼로그
+    if (showAiTopicDialog) {
+        AlertDialog(
+            onDismissRequest = { showAiTopicDialog = false },
+            title = { Text("✨ AI 패키지 생성") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "영상 주제를 입력하면 제목·설명·챕터·태그·썸네일·숏츠를 한 번에 만들어줘요.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = aiTopicInput,
+                        onValueChange = { aiTopicInput = it },
+                        label = { Text("주제 (예: 가챠 100연차 후기)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val topic = aiTopicInput.trim()
+                    showAiTopicDialog = false
+                    viewModel.generateYoutubePackage(topic)
+                }) { Text("생성") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAiTopicDialog = false }) { Text("취소") }
+            },
+        )
+    }
+
+    // R6: 채널 테마 선택 시트
+    if (showThemeSheet) {
+        ThemeSelectorSheet(
+            designTokens = container.designTokens,
+            selectedThemeId = state.selectedThemeId,
+            onSelect = viewModel::setSelectedTheme,
+            onDismiss = { showThemeSheet = false },
+        )
+    }
+
+    // R5c1: AI 패키지 결과 시트
+    if (state.showAiPackageSheet) {
+        state.youtubePackage?.let { pkg ->
+            val captionSuggestionCount = state.editSuggestions
+                .count { it is EditSuggestion.AddCaption }
+            val effectSuggestionCount = state.editSuggestions
+                .count { it is EditSuggestion.AddEffect }
+            AiPackageSheet(
+                pkg = pkg,
+                captionSuggestionCount = captionSuggestionCount,
+                effectSuggestionCount = effectSuggestionCount,
+                thumbnailBitmaps = state.thumbnailPreviewBitmaps,
+                suggestions = state.editSuggestions,
+                appliedSuggestionIndices = state.appliedSuggestionIndices,
+                selectedThumbnailVariantId = state.selectedThumbnailVariantId,
+                onSelectThumbnail = viewModel::setSelectedThumbnail,
+                onApplySuggestionAt = viewModel::applySuggestionAt,
+                onDismiss = viewModel::closeAiPackageSheet,
+                // R6 폴리시: 일괄 적용 후 시트 유지 — 사용자가 적용 결과(개별 항목 disabled 갱신)를
+                // 시각적으로 확인하고 추가 결정 가능하게.
+                onApplyCaptionSuggestions = viewModel::applyCaptionSuggestions,
+                onApplyEffectSuggestions = viewModel::applyEffectSuggestions,
+            )
+        }
+    }
+
+    // R5c1: AI 패키지 실패 시 사용자에게 안내
+    val phase = state.aiPackagePhase
+    if (phase is AiPackagePhase.Failed) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissAiPackageError,
+            title = { Text("AI 패키지 생성 실패") },
+            text = { Text(phase.message) },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissAiPackageError) { Text("확인") }
+            },
         )
     }
 
@@ -515,6 +736,9 @@ fun EditorScreen(
             onBgmReplaceOriginal = viewModel::setBgmReplaceOriginal,
             onExtractVocals = viewModel::extractVocalsFromFirstSegment,
             onDismiss = viewModel::closeSheet,
+            autoDuckingEnabled = state.autoDuckingEnabled,
+            onAutoDuckingChange = viewModel::setAutoDucking,
+            audioAnalysisReady = state.audioAnalysis?.loudness != null,
         )
         null -> Unit
     }

@@ -34,12 +34,18 @@ fun PreviewCaptionOverlay(
     onCaptionAnchorChange: (String, Float) -> Unit,
     onTextLayerAnchorChange: (String, Float) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * 효과 적용된 자막 id 집합. 이 집합에 속한 자막은 새 [com.mingeek.studiopop.ui.text.RichTextOverlay]
+     * 가 그리므로 여기서 제외 — 중복 표시 방지.
+     */
+    excludeCaptionIds: Set<String> = emptySet(),
 ) {
-    val active = remember(timeline, currentOutputMs) {
+    val active = remember(timeline, currentOutputMs, excludeCaptionIds) {
         val sourceTime = timeline.mapOutputToSource(currentOutputMs)?.second
             ?: return@remember emptyList()
         buildList {
             timeline.captions.forEach {
+                if (it.id in excludeCaptionIds) return@forEach
                 if (sourceTime in it.sourceStartMs..it.sourceEndMs) {
                     add(OverlayItem(it.id, Kind.CAPTION, it.text, it.style))
                 }

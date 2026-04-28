@@ -191,6 +191,9 @@ class CaptionViewModel(
                 },
             ).fold(
                 onSuccess = { cues ->
+                    // R5c3a 후속: word-level 정보가 있으면 세션 store 에 보관 — SRT 파일에는
+                    // word 가 직렬화되지 않아 편집기에서 다시 읽을 때 손실되는 걸 보완.
+                    container.captionWordStore.putFromCues(uri, cues)
                     _uiState.update { it.copy(phase = CaptionPhase.Ready, cues = cues) }
                 },
                 onFailure = { e ->

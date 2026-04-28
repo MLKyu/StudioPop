@@ -19,6 +19,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mingeek.studiopop.data.editor.CaptionPreset
 import com.mingeek.studiopop.data.editor.CaptionStyle
+import com.mingeek.studiopop.data.effects.builtins.CaptionStylePresets
 
 /**
  * 자막 / 텍스트 레이어 공용 편집 시트.
@@ -53,6 +55,28 @@ fun CaptionEditorSheet(
     onDismiss: () -> Unit,
     onSave: (EditableTextItem) -> Unit,
     onDelete: (() -> Unit)? = null,
+    /**
+     * R3.5: 자막 스타일 효과(8종)를 시트에서 직접 선택. null 이면 기본 스타일.
+     * 효과 row 자체를 숨기려면 [showEffectPicker] = false. 텍스트 레이어 등 자막이 아닌
+     * 항목엔 효과 시스템을 적용하지 않으므로 호출 측에서 false.
+     */
+    currentEffectId: String? = null,
+    onEffectChange: (String?) -> Unit = {},
+    showEffectPicker: Boolean = true,
+    /**
+     * R4.5: 비트 펄스 활성 상태 + 토글. 효과가 적용되지 않은 자막엔 비트 펄스가 의미 없으므로
+     * [currentEffectId] == null 일 땐 disabled. 분석 미수행/실패 시에도 동작은 노이즈 — 분석
+     * 결과가 빈 onsets 면 펄스가 발생하지 않을 뿐 토글 자체는 켤 수 있게 둔다.
+     */
+    beatSyncEnabled: Boolean = false,
+    onBeatSyncChange: (Boolean) -> Unit = {},
+    audioAnalyzing: Boolean = false,
+    /**
+     * R5c3a: 카라오케 모드(단어별 색 분기). 효과 적용된 자막에서만 활성. STT word 정보가
+     * 없어도 시간비례 fake word timing 으로 동작.
+     */
+    karaokeEnabled: Boolean = false,
+    onKaraokeChange: (Boolean) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var text by remember(item.id) { mutableStateOf(item.text) }
@@ -107,6 +131,80 @@ fun CaptionEditorSheet(
                         onClick = { preset = p },
                         label = { Text(p.label) },
                     )
+                }
+            }
+
+            if (showEffectPicker) {
+                Text(
+                    "자막 효과 (R3.5)",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = currentEffectId == null,
+                        onClick = { onEffectChange(null) },
+                        label = { Text("효과 없음") },
+                    )
+                    CaptionStylePresets.DEFINITIONS.forEach { def ->
+                        FilterChip(
+                            selected = currentEffectId == def.id,
+                            onClick = { onEffectChange(def.id) },
+                            label = {
+                                val emoji = def.previewHint.emoji
+                                Text(if (emoji.isBlank()) def.displayName else "$emoji ${def.displayName}")
+                            },
+                        )
+                    }
+                }
+
+                // R4.5: 비트 펄스 토글. 효과 미적용 자막엔 의미 없어 disabled.
+                val beatToggleEnabled = currentEffectId != null
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Switch(
+                        checked = beatSyncEnabled,
+                        onCheckedChange = onBeatSyncChange,
+                        enabled = beatToggleEnabled,
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "🥁 비트 펄스",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        val subtitle = when {
+                            !beatToggleEnabled -> "효과 선택 후 활성화 가능"
+                            audioAnalyzing -> "오디오 비트 분석 중…"
+                            else -> "음악 비트에 맞춰 자막 살짝 튐"
+                        }
+                        Text(
+                            subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+
+                // R5c3a: 카라오케 토글
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Switch(
+                        checked = karaokeEnabled,
+                        onCheckedChange = onKaraokeChange,
+                        enabled = beatToggleEnabled,
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "🎤 카라오케",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        val sub = if (beatToggleEnabled) {
+                            "단어별 색이 시간 따라 채워짐"
+                        } else "효과 선택 후 활성화 가능"
+                        Text(sub, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
 

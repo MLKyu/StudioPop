@@ -12,7 +12,21 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
 import com.mingeek.studiopop.StudioPopApp
+import com.mingeek.studiopop.data.ai.AiAssist
+import com.mingeek.studiopop.data.ai.DefaultAiAssist
+import com.mingeek.studiopop.data.ai.EditSuggestion
+import com.mingeek.studiopop.data.ai.YoutubePackage
+import com.mingeek.studiopop.data.audio.AudioAnalysis
+import com.mingeek.studiopop.data.audio.AudioAnalysisService
+import com.mingeek.studiopop.data.audio.Ducking
+import com.mingeek.studiopop.data.caption.CaptionWordStore
+import com.mingeek.studiopop.data.caption.Cue
+import com.mingeek.studiopop.data.caption.CueWord
 import com.mingeek.studiopop.data.caption.Srt
+import com.mingeek.studiopop.data.effects.EffectInstance
+import com.mingeek.studiopop.data.effects.EffectStack
+import com.mingeek.studiopop.data.thumbnail.FrameExtractor
+import com.mingeek.studiopop.data.thumbnail.ThumbnailComposer
 import com.mingeek.studiopop.data.editor.AudioTrack
 import com.mingeek.studiopop.data.editor.CaptionStyle
 import com.mingeek.studiopop.data.editor.CutRange
@@ -64,6 +78,20 @@ sealed interface ExportPhase {
 }
 
 enum class EditKind { CAPTION, TEXT_LAYER }
+
+/**
+ * R5c1: AI 패키지 생성 진행 상태. UI 가 어느 단계의 spinner 를 보여줄지 결정.
+ *  - Idle: 미시작.
+ *  - Analyzing: 영상 분석 중 (얼굴/톤/하이라이트/키워드).
+ *  - Generating: 분석 끝 후 패키지 생성 중 (제목/챕터/태그/썸네일).
+ *  - Failed: 실패 — 사용자에게 메시지 표시.
+ */
+sealed class AiPackagePhase {
+    data object Idle : AiPackagePhase()
+    data object Analyzing : AiPackagePhase()
+    data object Generating : AiPackagePhase()
+    data class Failed(val message: String) : AiPackagePhase()
+}
 
 /** 편집기에서 현재 열려있는 서브시트 종류. null 이면 시트 닫힘. */
 enum class EditorSheet {
@@ -117,6 +145,77 @@ data class EditorUiState(
      * 영역과 일치하도록 한다.
      */
     val previewAspectRatio: Float? = null,
+    /**
+     * R3.5: 자막 id → 자막 스타일 효과 id (예: "caption.glow_neon"). 매핑 없으면 기본 자막
+     * 스타일(기존 PreviewCaptionOverlay 경로) 로 그려진다. ViewModel 메모리만 — 영속화는
+     * 다음 라운드에서 TimelineSerializer 확장.
+     */
+    val captionEffectIds: Map<String, String> = emptyMap(),
+    /**
+     * R4.5: 첫 세그먼트 영상의 오디오 분석 결과. null 이면 미분석/분석 중. 비트 정보가 들어오면
+     * RichTextOverlay 의 펄스가 작동한다. 영상이 바뀔 때마다 LaunchedEffect 가 갱신.
+     */
+    val audioAnalysis: AudioAnalysis? = null,
+    val isAnalyzingAudio: Boolean = false,
+    /**
+     * R4.5: 비트 펄스가 활성화된 자막 id 집합. 효과 적용된 자막 + 이 집합에 속한 자막에서만
+     * 비트 시점에 scale punch 가 작동.
+     */
+    val captionBeatSyncIds: Set<String> = emptySet(),
+    /**
+     * R5c3a: 카라오케(단어별 색 진행) 가 활성화된 자막 id 집합. STT word 정보가 있으면 그대로,
+     * 없으면 [CaptionEffectResolver] 가 시간비례 fake word timing 을 자동 생성. 효과가 적용된
+     * 자막에서만 의미가 있어 시트 토글이 효과 미적용 시 disabled.
+     */
+    val captionKaraokeIds: Set<String> = emptySet(),
+    /**
+     * R5c3a 후속: 자막 id → 실 STT word timing. CaptionWordStore 에서 첫 segment uri 매칭으로
+     * 채워짐. 비어 있으면 카라오케는 fakeWordTimings fallback. SRT 직접 import / 사용자 직접
+     * 입력 자막은 비어 있다.
+     */
+    val captionWords: Map<String, List<CueWord>> = emptyMap(),
+    /**
+     * R5c1: AI 패키지 생성 결과 — null 이면 미생성. 사용자가 시트를 닫아도 결과는 유지되고,
+     * 다시 보기 가능.
+     */
+    val youtubePackage: YoutubePackage? = null,
+    val editSuggestions: List<EditSuggestion> = emptyList(),
+    val aiPackagePhase: AiPackagePhase = AiPackagePhase.Idle,
+    val showAiPackageSheet: Boolean = false,
+    /**
+     * R5c2: 썸네일 변형별 합성 비트맵. variant.id → Bitmap. AiPackageSheet 가 즉시 그릴 수
+     * 있도록 ViewModel 에서 미리 합성. 메모리: 1280×720 ARGB ≈ 3.5MB × 5 ≈ 18MB.
+     */
+    val thumbnailPreviewBitmaps: Map<String, Bitmap> = emptyMap(),
+    /**
+     * R5c2: AI 가 제안한 effect 들이 적용된 [EffectStack]. captionEffectIds 와 별개 — 영상 전체
+     * LUT, 줌 펀치, 인트로/아웃트로 등이 여기. 실제 렌더 통합은 R5c3 의 RenderPlan 빌더에서.
+     */
+    val effectStack: EffectStack = EffectStack.EMPTY,
+    /**
+     * R5c3b: BGM 자동 더킹 활성 여부. true 면 startExport 시 audioAnalysis.loudness 로
+     * Ducking.buildVolumeTrack 빌드 → DuckingAudioProcessor 적용. BGM 트랙이 없거나 라우드니스가
+     * 없으면 NOOP.
+     */
+    val autoDuckingEnabled: Boolean = false,
+    /**
+     * R6 자산 라운드: 채널 톤 테마 id. CaptionEffectResolver 가 이 id 로 ThemePack 조회해
+     * 자막 색·폰트·전환을 일제히 적용. 영상 교체 시 유지 — 사용자 채널 정체성은 영상별로 바뀌지
+     * 않음.
+     */
+    val selectedThemeId: String = "studiopop.default",
+    /**
+     * R6 폴리시: AI 가 만든 썸네일 변형 5장 중 사용자가 메인으로 선택한 id. null 이면 미선택.
+     * 새 generatePackage 시 첫 변형으로 자동 초기화. 향후 업로드 시점에 이 id 의 비트맵을 메인
+     * 썸네일로 사용.
+     */
+    val selectedThumbnailVariantId: String? = null,
+    /**
+     * R6 폴리시: 사용자가 개별 적용한 [editSuggestions] 의 인덱스 집합. 시트의 각 행에서 "추가"
+     * 버튼을 누른 항목들. 같은 항목 중복 적용 방지 + UI 가 disabled 표시.
+     * 새 패키지 생성/영상 교체 시 자동 초기화.
+     */
+    val appliedSuggestionIndices: Set<Int> = emptySet(),
 ) {
     val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
@@ -139,6 +238,11 @@ class EditorViewModel(
     private val faceTracker: FaceTracker,
     private val vocalSeparator: VocalSeparator,
     private val uvrModelManager: UvrModelManager,
+    private val audioAnalysisService: AudioAnalysisService,
+    private val aiAssist: AiAssist,
+    private val frameExtractor: FrameExtractor,
+    private val thumbnailComposer: ThumbnailComposer,
+    private val captionWordStore: CaptionWordStore,
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(EditorUiState())
@@ -411,10 +515,12 @@ class EditorViewModel(
 
     private suspend fun replaceWithVideo(uri: Uri) {
         val duration = withContext(Dispatchers.IO) { readDurationMs(uri) }
+        // 새 영상 로드 — 이전 영상에 묶여 있던 효과/AI/오디오 분석 결과를 모두 정리.
+        // 캡션 효과 매핑은 이전 자막 UUID 키라 새 영상에선 dangling 이고, audioAnalysis 의
+        // loudness 곡선은 이전 영상 시간축이라 그대로 더킹에 쓰면 잘못된 적용.
+        clearDerivedStateForVideoChange()
         if (duration <= 0) {
             // content:// URI 권한 만료·파일 이동 등으로 영상을 열 수 없는 경우.
-            // 길이 0 세그먼트가 들어가면 UI 가 "영상 로드됨처럼 보이지만 재생·export 실패" 상태가 돼
-            // 사용자 혼란이 크므로 아예 빈 상태로 두고 에러 phase 로 알림.
             _uiState.update {
                 it.copy(
                     timeline = Timeline(segments = emptyList()),
@@ -436,6 +542,36 @@ class EditorViewModel(
             )
         }
         ensureFrameStrip(uri, duration)
+    }
+
+    /**
+     * 영상 교체 시 이전 영상에 종속된 파생 state 들을 한 번에 정리. 비트맵은 회수하고,
+     * 효과/AI/카라오케/더킹 매핑은 새 자막에 매칭되지 않으므로 비움. 사용자 입력 토글
+     * (autoDuckingEnabled) 은 유지 — 새 영상 분석 후 자동 활성화될 수 있음.
+     */
+    private fun clearDerivedStateForVideoChange() {
+        val current = _uiState.value
+        current.thumbnailPreviewBitmaps.values.forEach { bmp ->
+            if (!bmp.isRecycled) bmp.recycle()
+        }
+        _uiState.update {
+            it.copy(
+                captionEffectIds = emptyMap(),
+                captionBeatSyncIds = emptySet(),
+                captionKaraokeIds = emptySet(),
+                captionWords = emptyMap(),
+                audioAnalysis = null,
+                isAnalyzingAudio = false,
+                youtubePackage = null,
+                editSuggestions = emptyList(),
+                aiPackagePhase = AiPackagePhase.Idle,
+                showAiPackageSheet = false,
+                thumbnailPreviewBitmaps = emptyMap(),
+                effectStack = com.mingeek.studiopop.data.effects.EffectStack.EMPTY,
+                selectedThumbnailVariantId = null,
+                appliedSuggestionIndices = emptySet(),
+            )
+        }
     }
 
     private fun ensureFrameStrip(uri: Uri, duration: Long) {
@@ -476,8 +612,25 @@ class EditorViewModel(
                 text = it.text,
             )
         }
+        // 첫 segment uri 가 있으면 CaptionWordStore 에서 매칭되는 word 를 자막별로 추출 — 카라오케
+        // 가 실제 발화 속도로 동작하도록. store 가 비어 있거나 다른 영상이면 빈 맵 → fakeWordTimings
+        // fallback.
+        val firstUri = _uiState.value.timeline.segments.firstOrNull()?.sourceUri
+        val captionWords: Map<String, List<CueWord>> = if (firstUri != null) {
+            timelineCaptions.associate { c ->
+                c.id to captionWordStore.wordsInRange(firstUri, c.sourceStartMs, c.sourceEndMs)
+            }.filterValues { it.isNotEmpty() }
+        } else emptyMap()
+
+        // 새 자막 UUID 가 발급되므로 이전 캡션에 매핑된 효과/펄스/카라오케는 dangling — 정리.
         _uiState.update { state ->
-            state.copy(timeline = state.timeline.copy(captions = timelineCaptions))
+            state.copy(
+                timeline = state.timeline.copy(captions = timelineCaptions),
+                captionEffectIds = emptyMap(),
+                captionBeatSyncIds = emptySet(),
+                captionKaraokeIds = emptySet(),
+                captionWords = captionWords,
+            )
         }
     }
 
@@ -746,7 +899,345 @@ class EditorViewModel(
             EditKind.TEXT_LAYER -> state.timeline.deleteTextLayer(id)
         }
         _uiState.update {
-            it.copy(timeline = newTimeline, editingItem = null, editingKind = null)
+            it.copy(
+                timeline = newTimeline,
+                editingItem = null,
+                editingKind = null,
+                // 삭제된 자막의 효과/비트 펄스 매핑도 정리 — 댕글링 키 누적 방지
+                captionEffectIds = if (kind == EditKind.CAPTION)
+                    it.captionEffectIds - id
+                else it.captionEffectIds,
+                captionBeatSyncIds = if (kind == EditKind.CAPTION)
+                    it.captionBeatSyncIds - id
+                else it.captionBeatSyncIds,
+                captionKaraokeIds = if (kind == EditKind.CAPTION)
+                    it.captionKaraokeIds - id
+                else it.captionKaraokeIds,
+                captionWords = if (kind == EditKind.CAPTION)
+                    it.captionWords - id
+                else it.captionWords,
+            )
+        }
+    }
+
+    /**
+     * 자막에 자막 스타일 효과 적용. effectId == null 이면 효과 제거(기본 스타일로 복원).
+     * 효과 id 는 [com.mingeek.studiopop.data.effects.builtins.CaptionStylePresets] 의 상수 사용.
+     */
+    fun setCaptionEffect(captionId: String, effectId: String?) {
+        _uiState.update { state ->
+            val current = state.captionEffectIds
+            val updated = if (effectId == null) current - captionId
+                else current + (captionId to effectId)
+            state.copy(captionEffectIds = updated)
+        }
+    }
+
+    /**
+     * R4.5: 자막에 비트 펄스 적용 여부. enabled=false 면 집합에서 제거. 효과 미적용 자막에선
+     * 의미 없으므로 시트 UI 가 disabled 상태 처리.
+     */
+    fun setCaptionBeatSync(captionId: String, enabled: Boolean) {
+        _uiState.update { state ->
+            val updated = if (enabled) state.captionBeatSyncIds + captionId
+                else state.captionBeatSyncIds - captionId
+            state.copy(captionBeatSyncIds = updated)
+        }
+    }
+
+    /**
+     * R5c3a: 자막에 카라오케 모드 적용 여부.
+     */
+    fun setCaptionKaraoke(captionId: String, enabled: Boolean) {
+        _uiState.update { state ->
+            val updated = if (enabled) state.captionKaraokeIds + captionId
+                else state.captionKaraokeIds - captionId
+            state.copy(captionKaraokeIds = updated)
+        }
+    }
+
+    /**
+     * R5c1: 한 번 호출로 영상 분석 + AI YouTube 패키지 생성 (제목/설명/챕터/태그/썸네일/숏츠).
+     * 결과는 [EditorUiState.youtubePackage] 와 [editSuggestions] 에 저장되고
+     * [showAiPackageSheet] 가 true 가 되어 UI 가 시트를 띄운다.
+     *
+     * SRT 큐는 timeline.captions 를 변환해 사용 — 자동 자막을 미리 생성한 사용자만 챕터/하이라이트
+     * 가 풍부해진다 (큐 없으면 키워드/하이라이트 없이 진행).
+     *
+     * 실패 시 [AiPackagePhase.Failed] 로 전환되며 시트는 열리지 않음. 사용자에게 별도 토스트 표시는
+     * 호출 측 UI 가 결정.
+     */
+    fun generateYoutubePackage(topic: String) {
+        val state = _uiState.value
+        val firstSeg = state.timeline.segments.firstOrNull() ?: return
+        if (state.aiPackagePhase is AiPackagePhase.Analyzing ||
+            state.aiPackagePhase is AiPackagePhase.Generating
+        ) return // 이미 진행 중
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(aiPackagePhase = AiPackagePhase.Analyzing) }
+            val cues = state.timeline.captions
+                .sortedBy { it.sourceStartMs }
+                .mapIndexed { idx, c ->
+                    Cue(
+                        index = idx + 1,
+                        startMs = c.sourceStartMs,
+                        endMs = c.sourceEndMs,
+                        text = c.text,
+                    )
+                }
+            val durationMs = state.timeline.outputDurationMs
+                .takeIf { it > 0L } ?: firstSeg.durationMs
+
+            // 1) 분석
+            val assist = aiAssist as? DefaultAiAssist
+            val analysisResult = if (assist != null) {
+                assist.analyzeVideoWithContext(
+                    uri = firstSeg.sourceUri,
+                    srtCues = cues,
+                    topic = topic.ifBlank { null },
+                )
+            } else {
+                aiAssist.analyzeVideo(firstSeg.sourceUri)
+            }
+            val analysis = analysisResult.getOrElse {
+                _uiState.update { s ->
+                    s.copy(aiPackagePhase = AiPackagePhase.Failed(it.message ?: "영상 분석 실패"))
+                }
+                return@launch
+            }
+
+            _uiState.update { it.copy(aiPackagePhase = AiPackagePhase.Generating) }
+
+            // 2) 패키지 생성 + 편집 제안 — 둘 다 한 번 시도. 어느 한쪽 실패는 흡수.
+            val packageResult = aiAssist.generatePackage(analysis, topic.ifBlank { null })
+            val suggestionsResult = aiAssist.suggestEdits(analysis)
+
+            val ytPackage = packageResult.getOrElse {
+                _uiState.update { s ->
+                    s.copy(aiPackagePhase = AiPackagePhase.Failed(it.message ?: "패키지 생성 실패"))
+                }
+                return@launch
+            }
+            val suggestions = suggestionsResult.getOrDefault(emptyList())
+
+            // 3) 썸네일 비트맵 합성 — 첫 키프레임을 source 로 각 variant 합성. 실패 시 빈 맵.
+            val thumbBitmaps = composeThumbnailBitmaps(
+                uri = firstSeg.sourceUri,
+                durationMs = durationMs,
+                variants = ytPackage.thumbnailVariants,
+            )
+
+            // 이전 합성 결과(있다면) 회수 — 같은 영상 재생성/주제 변경 시 누적 방지.
+            val previousBitmaps = _uiState.value.thumbnailPreviewBitmaps
+            previousBitmaps.values.forEach { bmp ->
+                if (!bmp.isRecycled) bmp.recycle()
+            }
+
+            _uiState.update {
+                it.copy(
+                    youtubePackage = ytPackage,
+                    editSuggestions = suggestions,
+                    thumbnailPreviewBitmaps = thumbBitmaps,
+                    aiPackagePhase = AiPackagePhase.Idle,
+                    showAiPackageSheet = true,
+                    // 첫 합성 변형을 기본 메인 썸네일로 — 사용자가 시트에서 다른 걸 누르면 갱신
+                    selectedThumbnailVariantId = ytPackage.thumbnailVariants.firstOrNull()?.id
+                        ?: it.selectedThumbnailVariantId,
+                    // 새 패키지의 제안은 미적용 상태로 시작
+                    appliedSuggestionIndices = emptySet(),
+                )
+            }
+        }
+    }
+
+    /**
+     * 첫 키프레임 1장을 source 로, 각 [com.mingeek.studiopop.data.thumbnail.ThumbnailVariant] 를
+     * 1280×720 비트맵으로 합성. 실패한 항목은 결과 맵에 빠짐 — 일부 실패가 전체를 막지 않게.
+     */
+    private suspend fun composeThumbnailBitmaps(
+        uri: android.net.Uri,
+        durationMs: Long,
+        variants: List<com.mingeek.studiopop.data.thumbnail.ThumbnailVariant>,
+    ): Map<String, Bitmap> {
+        if (variants.isEmpty() || durationMs <= 0L) return emptyMap()
+        // 영상의 1/3 지점을 source — 첫 프레임이 검정인 경우가 많아 살짝 안쪽이 안전.
+        val sourceFrame = frameExtractor.extractFrame(uri, durationMs / 3)
+            ?: return emptyMap()
+        val out = mutableMapOf<String, Bitmap>()
+        for (v in variants) {
+            runCatching { thumbnailComposer.compose(sourceFrame, v) }
+                .onSuccess { out[v.id] = it }
+        }
+        // source 는 합성 함수가 소비/recycle 하지 않으므로 우리가 관리. 합성 후 더 이상 필요 없음.
+        if (!sourceFrame.isRecycled) sourceFrame.recycle()
+        return out
+    }
+
+    fun closeAiPackageSheet() {
+        _uiState.update { it.copy(showAiPackageSheet = false) }
+    }
+
+    /** 실패 다이얼로그를 닫고 phase 를 Idle 로 되돌린다. */
+    fun dismissAiPackageError() {
+        _uiState.update { it.copy(aiPackagePhase = AiPackagePhase.Idle) }
+    }
+
+    fun reopenAiPackageSheet() {
+        if (_uiState.value.youtubePackage != null) {
+            _uiState.update { it.copy(showAiPackageSheet = true) }
+        }
+    }
+
+    /**
+     * R5c1: editSuggestions 의 AddCaption 제안만 자동 적용 (가장 안전한 부분).
+     * AddCaption(ML Kit 위치 회피용) 은 새 TimelineCaption 으로 추가.
+     */
+    fun applyCaptionSuggestions() {
+        val state = _uiState.value
+        val captionIndices = state.editSuggestions
+            .withIndex()
+            .filter { it.value is EditSuggestion.AddCaption }
+            .map { it.index }
+        if (captionIndices.isEmpty()) return
+        var newTimeline = state.timeline
+        for (idx in captionIndices) {
+            val s = state.editSuggestions[idx] as EditSuggestion.AddCaption
+            val cap = TimelineCaption(
+                sourceStartMs = s.sourceStartMs,
+                sourceEndMs = s.sourceEndMs,
+                text = s.text,
+                style = CaptionStyle.DEFAULT,
+            )
+            newTimeline = newTimeline.addCaption(cap)
+        }
+        _uiState.update {
+            it.copy(
+                timeline = newTimeline,
+                appliedSuggestionIndices = it.appliedSuggestionIndices + captionIndices,
+            )
+        }
+    }
+
+    /**
+     * R6 폴리시: 단일 제안을 인덱스로 적용. 같은 인덱스 재호출은 무시 (이미 적용됨).
+     * 적용 종류는 [EditSuggestion] 종류에 따라 분기 — AddCaption 은 Timeline 에 자막 추가,
+     * AddEffect 는 effectStack 에 instance 추가. 다른 종류(AddCut/AddSfx/ApplyTheme) 는 R6+
+     * 에서 처리.
+     */
+    fun applySuggestionAt(index: Int) {
+        val state = _uiState.value
+        if (index in state.appliedSuggestionIndices) return
+        val s = state.editSuggestions.getOrNull(index) ?: return
+        when (s) {
+            is EditSuggestion.AddCaption -> {
+                val cap = TimelineCaption(
+                    sourceStartMs = s.sourceStartMs,
+                    sourceEndMs = s.sourceEndMs,
+                    text = s.text,
+                    style = CaptionStyle.DEFAULT,
+                )
+                _uiState.update {
+                    it.copy(
+                        timeline = it.timeline.addCaption(cap),
+                        appliedSuggestionIndices = it.appliedSuggestionIndices + index,
+                    )
+                }
+            }
+            is EditSuggestion.AddEffect -> {
+                val instance = EffectInstance(
+                    definitionId = s.effectDefinitionId,
+                    sourceStartMs = s.sourceStartMs,
+                    sourceEndMs = s.sourceEndMs,
+                    params = com.mingeek.studiopop.data.effects.EffectParamValues(s.params),
+                )
+                _uiState.update {
+                    it.copy(
+                        effectStack = it.effectStack.add(instance),
+                        appliedSuggestionIndices = it.appliedSuggestionIndices + index,
+                    )
+                }
+            }
+            // AddCut/AddSfx/ApplyTheme 는 R6+ 미지원 — 적용 무시. UI 가 사전에 disabled 라
+            // 호출 자체가 안 들어와야 정상이지만 방어적으로 noop.
+            else -> Unit
+        }
+    }
+
+    /**
+     * R6 폴리시 보조: 시트 UI 가 미지원 종류를 "예정" 으로 표시할 수 있게 헬퍼.
+     */
+    fun isSuggestionSupported(suggestion: EditSuggestion): Boolean = when (suggestion) {
+        is EditSuggestion.AddCaption -> true
+        is EditSuggestion.AddEffect -> true
+        else -> false
+    }
+
+    /**
+     * R5c2: editSuggestions 의 AddEffect 제안을 [effectStack] 에 일괄 등록. 실제 렌더 적용은
+     * R5c3 의 RenderPlan 빌더 통합에서 — 여기서는 데이터만 보관해서 사용자가 적용했음을
+     * UI 가 인지할 수 있게 한다. 같은 정의 id 가 이미 적용돼 있어도 시각적 충돌이 없으면
+     * 중복 추가는 허용 (사용자가 명시적으로 다시 적용).
+     */
+    fun applyEffectSuggestions() {
+        val state = _uiState.value
+        val effectIndices = state.editSuggestions
+            .withIndex()
+            .filter { it.value is EditSuggestion.AddEffect }
+            .map { it.index }
+        if (effectIndices.isEmpty()) return
+        var stack = state.effectStack
+        for (idx in effectIndices) {
+            val s = state.editSuggestions[idx] as EditSuggestion.AddEffect
+            stack = stack.add(
+                EffectInstance(
+                    definitionId = s.effectDefinitionId,
+                    sourceStartMs = s.sourceStartMs,
+                    sourceEndMs = s.sourceEndMs,
+                    // 제안의 파라미터(예: LUT id) 를 인스턴스로 보존 — 손실 시 효과 정체성 사라짐.
+                    params = com.mingeek.studiopop.data.effects.EffectParamValues(s.params),
+                )
+            )
+        }
+        _uiState.update {
+            it.copy(
+                effectStack = stack,
+                appliedSuggestionIndices = it.appliedSuggestionIndices + effectIndices,
+            )
+        }
+    }
+
+    /** 진행 중인 오디오 분석 Job — 영상 교체 시 cancel 해 stale 결과로 덮이는 race 방지. */
+    private var audioAnalysisJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * R4.5: 영상의 오디오 분석을 시작 (비트/라우드니스/파형). 결과는 [AnalysisCache] 에 저장돼
+     * 같은 Uri 재호출 시 즉시 반환된다. 영상 첫 로드/교체 시 EditorScreen 의 LaunchedEffect 가
+     * 자동 트리거.
+     *
+     * 사용자가 빠르게 영상을 교체하면 이전 분석 Job 을 즉시 cancel — 늦게 도착한 stale 결과가
+     * 새 영상의 분석을 덮어쓰지 않게.
+     */
+    fun analyzeFirstSegmentAudio() {
+        val state = _uiState.value
+        val firstSeg = state.timeline.segments.firstOrNull() ?: return
+        val targetUri = firstSeg.sourceUri
+        if (state.audioAnalysis?.sourceUri == targetUri) return // 캐시 hit
+
+        audioAnalysisJob?.cancel()
+        audioAnalysisJob = viewModelScope.launch {
+            _uiState.update { it.copy(isAnalyzingAudio = true) }
+            val durationMs = firstSeg.durationMs
+            val analysis = runCatching {
+                audioAnalysisService.analyze(targetUri, durationMs)
+            }.getOrNull()
+            // 결과 적용 직전에 영상이 또 바뀌었으면 무시 — defensive
+            val currentUri = _uiState.value.timeline.segments.firstOrNull()?.sourceUri
+            if (currentUri == targetUri) {
+                _uiState.update { it.copy(audioAnalysis = analysis, isAnalyzingAudio = false) }
+            } else {
+                _uiState.update { it.copy(isAnalyzingAudio = false) }
+            }
         }
     }
 
@@ -1225,14 +1716,46 @@ class EditorViewModel(
     }
 
     // --- Export ---
+    /**
+     * R5c3b: BGM 자동 더킹 토글. 켜면 startExport 시 라우드니스로 KeyframeTrack 빌드.
+     */
+    fun setAutoDucking(enabled: Boolean) {
+        _uiState.update { it.copy(autoDuckingEnabled = enabled) }
+    }
+
+    /**
+     * R6 자산 라운드: 채널 톤 테마 변경. 즉시 자막·썸네일 톤이 일제히 갱신.
+     */
+    fun setSelectedTheme(themeId: String) {
+        _uiState.update { it.copy(selectedThemeId = themeId) }
+    }
+
+    /** R6 폴리시: AI 썸네일 5장 중 메인으로 사용할 변형 선택. */
+    fun setSelectedThumbnail(variantId: String?) {
+        _uiState.update { it.copy(selectedThumbnailVariantId = variantId) }
+    }
+
     fun startExport() {
         val state = _uiState.value
         if (!state.hasVideo) return
+
+        // R5c3b: 자동 더킹 — 활성 + BGM 있음 + 라우드니스 분석 결과 있을 때만 트랙 빌드.
+        val duckingTrack = if (state.autoDuckingEnabled &&
+            state.timeline.audioTrack != null
+        ) {
+            state.audioAnalysis?.loudness?.let { loudness ->
+                Ducking.buildVolumeTrack(
+                    loudness = loudness,
+                    bgmBaseVolume = 1f,
+                )
+            }
+        } else null
 
         viewModelScope.launch {
             _uiState.update { it.copy(phase = ExportPhase.Running(0f)) }
             videoEditor.exportTimeline(
                 timeline = state.timeline,
+                bgmDuckingTrack = duckingTrack,
                 onProgress = { p ->
                     _uiState.update { s ->
                         if (s.phase is ExportPhase.Running) s.copy(phase = ExportPhase.Running(p))
@@ -1270,6 +1793,10 @@ class EditorViewModel(
      */
     override fun onCleared() {
         super.onCleared()
+        // R5c2: 썸네일 비트맵 메모리 회수 — 1280×720 ARGB × 5 ≈ 18MB.
+        _uiState.value.thumbnailPreviewBitmaps.values.forEach { bmp ->
+            if (!bmp.isRecycled) bmp.recycle()
+        }
         val pid = projectId ?: return
         if (!autoSaveEnabled) return
         val tl = _uiState.value.timeline
@@ -1359,6 +1886,11 @@ class EditorViewModel(
                     faceTracker = app.container.faceTracker,
                     vocalSeparator = app.container.vocalSeparator,
                     uvrModelManager = app.container.uvrModelManager,
+                    audioAnalysisService = app.container.audioAnalysisService,
+                    aiAssist = app.container.aiAssist,
+                    frameExtractor = app.container.frameExtractor,
+                    thumbnailComposer = app.container.thumbnailComposer,
+                    captionWordStore = app.container.captionWordStore,
                 )
             }
         }
