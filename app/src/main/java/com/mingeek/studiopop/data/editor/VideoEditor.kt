@@ -130,6 +130,13 @@ class VideoEditor(
         lutId: String? = null,
         /** 0..1. LUT 강도 — 1=완전 적용, 0=원본. null 이면 1f. */
         lutIntensity: Float = 1f,
+        /**
+         * R6: 호출 측이 [com.mingeek.studiopop.data.effects.EffectStack] 을 미리
+         * Media3 [Effect] 로 변환해 넘긴 결과 — Ken Burns / Zoom Punch 같은 시간 가변 카메라 무브.
+         * LUT 다음, 종횡비/오버레이 이전에 체인에 합류 (raw 픽셀에 카메라 무브 적용 → 그 위에
+         * 자막/오버레이).
+         */
+        videoFxEffects: List<Effect> = emptyList(),
     ): Result<File> = withContext(Dispatchers.Main) {
         runCatching {
             val effective = timeline.effectiveSegments()
@@ -224,11 +231,15 @@ class VideoEditor(
                 readFrameSize(effective.first().sourceUri)
             } ?: DEFAULT_FRAME_SIZE
             val overlays = buildOverlayList(timeline, frameW, frameH)
-            // LUT 은 자막/오버레이 합성 전 raw 영상 픽셀에 먼저 적용되어야 함 (오버레이 색까지
-            // 톤이 변하면 가독성 저하). 그래서 effect 체인 가장 앞에 둠.
+            // 효과 체인 순서:
+            //  1. LUT — raw 영상 픽셀의 색감 변환. 오버레이 가독성 보호 위해 가장 앞.
+            //  2. videoFxEffects (Ken Burns / Zoom Punch) — 카메라 무브, 색감과 무관해 LUT 뒤.
+            //  3. Presentation (종횡비) — 출력 프레임 크기 결정.
+            //  4. OverlayEffect (자막/짤/모자이크) — 시청자에게 보이는 마지막 합성.
             val lutEffect = LutColorEffect.forLutId(lutId, lutIntensity)
             val videoEffects = ImmutableList.Builder<Effect>().apply {
                 lutEffect?.let { add(it) }
+                videoFxEffects.forEach { add(it) }
                 aspectRatio?.let {
                     add(
                         Presentation.createForAspectRatio(
@@ -373,29 +384,6 @@ class VideoEditor(
         return overlays
     }
 
-    /**
-     * (sourceStart, sourceEnd) 를 **effective** segments 에 매핑해 output 시간 범위들로 변환.
-     * effective 기준이라 CutRange 로 제거된 구간은 자동으로 빠짐 — 오버레이가 출력 영상과 정확히 맞물림.
-     * 한 구간이 여러 (effective) 세그먼트에 걸치면 여러 개 조각이 반환됨.
-     */
-    private fun Timeline.rangeToOutputWindows(
-        sourceStartMs: Long,
-        sourceEndMs: Long,
-    ): List<LongRange> {
-        val result = mutableListOf<LongRange>()
-        var accumulated = 0L
-        for (seg in effectiveSegments()) {
-            val overlapStart = maxOf(sourceStartMs, seg.sourceStartMs)
-            val overlapEnd = minOf(sourceEndMs, seg.sourceEndMs)
-            if (overlapEnd > overlapStart) {
-                val outStart = accumulated + (overlapStart - seg.sourceStartMs)
-                val outEnd = accumulated + (overlapEnd - seg.sourceStartMs)
-                result += outStart..outEnd
-            }
-            accumulated += seg.durationMs
-        }
-        return result
-    }
 
     /**
      * 주어진 effective 세그먼트를 감싸는 raw 세그먼트 찾기.
