@@ -23,6 +23,7 @@ import com.mingeek.studiopop.data.caption.CaptionWordStore
 import com.mingeek.studiopop.data.caption.Cue
 import com.mingeek.studiopop.data.caption.CueWord
 import com.mingeek.studiopop.data.caption.Srt
+import com.mingeek.studiopop.data.design.DesignTokens
 import com.mingeek.studiopop.data.effects.EffectInstance
 import com.mingeek.studiopop.data.effects.EffectStack
 import com.mingeek.studiopop.data.thumbnail.FrameExtractor
@@ -243,6 +244,7 @@ class EditorViewModel(
     private val frameExtractor: FrameExtractor,
     private val thumbnailComposer: ThumbnailComposer,
     private val captionWordStore: CaptionWordStore,
+    private val designTokens: DesignTokens,
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(EditorUiState())
@@ -1751,11 +1753,21 @@ class EditorViewModel(
             }
         } else null
 
+        // R6: 선택된 채널 톤 테마 → 합성 LUT(코드) 적용. theme 의 lutId 가 null 이면 LUT 없음.
+        // recommendedIntensity 는 LUT 자산 메타에서 — UI 슬라이더가 아직 없으니 추천값 그대로.
+        val theme = designTokens.theme(state.selectedThemeId)
+        val themeLutId = theme.lutId
+        val themeLutIntensity = themeLutId
+            ?.let { designTokens.lut(it)?.recommendedIntensity }
+            ?: 1f
+
         viewModelScope.launch {
             _uiState.update { it.copy(phase = ExportPhase.Running(0f)) }
             videoEditor.exportTimeline(
                 timeline = state.timeline,
                 bgmDuckingTrack = duckingTrack,
+                lutId = themeLutId,
+                lutIntensity = themeLutIntensity,
                 onProgress = { p ->
                     _uiState.update { s ->
                         if (s.phase is ExportPhase.Running) s.copy(phase = ExportPhase.Running(p))
@@ -1891,6 +1903,7 @@ class EditorViewModel(
                     frameExtractor = app.container.frameExtractor,
                     thumbnailComposer = app.container.thumbnailComposer,
                     captionWordStore = app.container.captionWordStore,
+                    designTokens = app.container.designTokens,
                 )
             }
         }
