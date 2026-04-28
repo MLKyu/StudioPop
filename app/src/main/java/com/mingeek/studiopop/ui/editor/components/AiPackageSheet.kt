@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -61,8 +62,10 @@ fun AiPackageSheet(
     effectSuggestionCount: Int,
     thumbnailBitmaps: Map<String, Bitmap>,
     suggestions: List<EditSuggestion>,
+    appliedSuggestionIndices: Set<Int>,
     selectedThumbnailVariantId: String?,
     onSelectThumbnail: (String) -> Unit,
+    onApplySuggestionAt: (Int) -> Unit,
     onDismiss: () -> Unit,
     onApplyCaptionSuggestions: () -> Unit,
     onApplyEffectSuggestions: () -> Unit,
@@ -241,9 +244,14 @@ fun AiPackageSheet(
             // 자막/효과 제안 적용
             if (captionSuggestionCount > 0 || effectSuggestionCount > 0) {
                 SectionTitle("AI 편집 제안")
-                // 제안 항목별 미리보기 — 사용자가 적용 전에 어떤 변경이 일어날지 한눈에 확인.
-                suggestions.take(15).forEach { s ->
-                    SuggestionRow(s)
+                // 제안 항목별 미리보기 + 개별 "추가" 버튼.
+                // suggestions 의 인덱스를 그대로 사용 — ViewModel 의 appliedSuggestionIndices 와 동기화.
+                suggestions.take(15).forEachIndexed { idx, s ->
+                    SuggestionRow(
+                        suggestion = s,
+                        applied = idx in appliedSuggestionIndices,
+                        onApply = { onApplySuggestionAt(idx) },
+                    )
                 }
                 if (suggestions.size > 15) {
                     Text(
@@ -284,11 +292,18 @@ private fun SectionTitle(text: String) {
 }
 
 /**
- * 제안 한 줄 미리보기. 종류별 이모지 + 시간 범위 + 짧은 설명.
+ * 제안 한 줄 미리보기. 종류별 이모지 + 시간 범위 + 짧은 설명 + 우측 액션 버튼.
+ * 적용 종류별 라벨:
+ *  - 추가/✓ 적용됨 — AddCaption / AddEffect (실 적용 가능)
+ *  - 예정 — AddCut / AddSfx / ApplyTheme (R6+ 에서 처리, 현재는 disabled 로 명시)
  */
 @Composable
-private fun SuggestionRow(s: EditSuggestion) {
-    val (emoji, summary) = when (s) {
+private fun SuggestionRow(
+    suggestion: EditSuggestion,
+    applied: Boolean,
+    onApply: () -> Unit,
+) {
+    val (emoji, summary) = when (val s = suggestion) {
         is EditSuggestion.AddCaption ->
             "💬" to "${formatMs(s.sourceStartMs)}~${formatMs(s.sourceEndMs)}  " +
                 s.text.take(30)
@@ -305,6 +320,8 @@ private fun SuggestionRow(s: EditSuggestion) {
         is EditSuggestion.ApplyTheme ->
             "🎨" to "테마 적용: ${s.themeId}"
     }
+    val isSupported = suggestion is EditSuggestion.AddCaption ||
+        suggestion is EditSuggestion.AddEffect
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -317,6 +334,18 @@ private fun SuggestionRow(s: EditSuggestion) {
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.weight(1f),
         )
+        TextButton(
+            onClick = onApply,
+            enabled = isSupported && !applied,
+        ) {
+            Text(
+                when {
+                    !isSupported -> "예정"
+                    applied -> "✓ 적용됨"
+                    else -> "추가"
+                }
+            )
+        }
     }
 }
 

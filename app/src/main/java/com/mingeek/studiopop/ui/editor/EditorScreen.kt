@@ -649,17 +649,15 @@ fun EditorScreen(
                 effectSuggestionCount = effectSuggestionCount,
                 thumbnailBitmaps = state.thumbnailPreviewBitmaps,
                 suggestions = state.editSuggestions,
+                appliedSuggestionIndices = state.appliedSuggestionIndices,
                 selectedThumbnailVariantId = state.selectedThumbnailVariantId,
                 onSelectThumbnail = viewModel::setSelectedThumbnail,
+                onApplySuggestionAt = viewModel::applySuggestionAt,
                 onDismiss = viewModel::closeAiPackageSheet,
-                onApplyCaptionSuggestions = {
-                    viewModel.applyCaptionSuggestions()
-                    viewModel.closeAiPackageSheet()
-                },
-                onApplyEffectSuggestions = {
-                    viewModel.applyEffectSuggestions()
-                    viewModel.closeAiPackageSheet()
-                },
+                // R6 폴리시: 일괄 적용 후 시트 유지 — 사용자가 적용 결과(개별 항목 disabled 갱신)를
+                // 시각적으로 확인하고 추가 결정 가능하게.
+                onApplyCaptionSuggestions = viewModel::applyCaptionSuggestions,
+                onApplyEffectSuggestions = viewModel::applyEffectSuggestions,
             )
         }
     }

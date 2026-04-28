@@ -210,6 +210,12 @@ data class EditorUiState(
      * 썸네일로 사용.
      */
     val selectedThumbnailVariantId: String? = null,
+    /**
+     * R6 폴리시: 사용자가 개별 적용한 [editSuggestions] 의 인덱스 집합. 시트의 각 행에서 "추가"
+     * 버튼을 누른 항목들. 같은 항목 중복 적용 방지 + UI 가 disabled 표시.
+     * 새 패키지 생성/영상 교체 시 자동 초기화.
+     */
+    val appliedSuggestionIndices: Set<Int> = emptySet(),
 ) {
     val hasVideo: Boolean get() = timeline.segments.isNotEmpty()
     val canExport: Boolean
@@ -563,6 +569,7 @@ class EditorViewModel(
                 thumbnailPreviewBitmaps = emptyMap(),
                 effectStack = com.mingeek.studiopop.data.effects.EffectStack.EMPTY,
                 selectedThumbnailVariantId = null,
+                appliedSuggestionIndices = emptySet(),
             )
         }
     }
@@ -1037,6 +1044,8 @@ class EditorViewModel(
                     // 첫 합성 변형을 기본 메인 썸네일로 — 사용자가 시트에서 다른 걸 누르면 갱신
                     selectedThumbnailVariantId = ytPackage.thumbnailVariants.firstOrNull()?.id
                         ?: it.selectedThumbnailVariantId,
+                    // 새 패키지의 제안은 미적용 상태로 시작
+                    appliedSuggestionIndices = emptySet(),
                 )
             }
         }
@@ -1086,11 +1095,14 @@ class EditorViewModel(
      */
     fun applyCaptionSuggestions() {
         val state = _uiState.value
-        val captionsToAdd = state.editSuggestions
-            .filterIsInstance<EditSuggestion.AddCaption>()
-        if (captionsToAdd.isEmpty()) return
+        val captionIndices = state.editSuggestions
+            .withIndex()
+            .filter { it.value is EditSuggestion.AddCaption }
+            .map { it.index }
+        if (captionIndices.isEmpty()) return
         var newTimeline = state.timeline
-        for (s in captionsToAdd) {
+        for (idx in captionIndices) {
+            val s = state.editSuggestions[idx] as EditSuggestion.AddCaption
             val cap = TimelineCaption(
                 sourceStartMs = s.sourceStartMs,
                 sourceEndMs = s.sourceEndMs,
@@ -1099,7 +1111,66 @@ class EditorViewModel(
             )
             newTimeline = newTimeline.addCaption(cap)
         }
-        _uiState.update { it.copy(timeline = newTimeline) }
+        _uiState.update {
+            it.copy(
+                timeline = newTimeline,
+                appliedSuggestionIndices = it.appliedSuggestionIndices + captionIndices,
+            )
+        }
+    }
+
+    /**
+     * R6 폴리시: 단일 제안을 인덱스로 적용. 같은 인덱스 재호출은 무시 (이미 적용됨).
+     * 적용 종류는 [EditSuggestion] 종류에 따라 분기 — AddCaption 은 Timeline 에 자막 추가,
+     * AddEffect 는 effectStack 에 instance 추가. 다른 종류(AddCut/AddSfx/ApplyTheme) 는 R6+
+     * 에서 처리.
+     */
+    fun applySuggestionAt(index: Int) {
+        val state = _uiState.value
+        if (index in state.appliedSuggestionIndices) return
+        val s = state.editSuggestions.getOrNull(index) ?: return
+        when (s) {
+            is EditSuggestion.AddCaption -> {
+                val cap = TimelineCaption(
+                    sourceStartMs = s.sourceStartMs,
+                    sourceEndMs = s.sourceEndMs,
+                    text = s.text,
+                    style = CaptionStyle.DEFAULT,
+                )
+                _uiState.update {
+                    it.copy(
+                        timeline = it.timeline.addCaption(cap),
+                        appliedSuggestionIndices = it.appliedSuggestionIndices + index,
+                    )
+                }
+            }
+            is EditSuggestion.AddEffect -> {
+                val instance = EffectInstance(
+                    definitionId = s.effectDefinitionId,
+                    sourceStartMs = s.sourceStartMs,
+                    sourceEndMs = s.sourceEndMs,
+                    params = com.mingeek.studiopop.data.effects.EffectParamValues(s.params),
+                )
+                _uiState.update {
+                    it.copy(
+                        effectStack = it.effectStack.add(instance),
+                        appliedSuggestionIndices = it.appliedSuggestionIndices + index,
+                    )
+                }
+            }
+            // AddCut/AddSfx/ApplyTheme 는 R6+ 미지원 — 적용 무시. UI 가 사전에 disabled 라
+            // 호출 자체가 안 들어와야 정상이지만 방어적으로 noop.
+            else -> Unit
+        }
+    }
+
+    /**
+     * R6 폴리시 보조: 시트 UI 가 미지원 종류를 "예정" 으로 표시할 수 있게 헬퍼.
+     */
+    fun isSuggestionSupported(suggestion: EditSuggestion): Boolean = when (suggestion) {
+        is EditSuggestion.AddCaption -> true
+        is EditSuggestion.AddEffect -> true
+        else -> false
     }
 
     /**
@@ -1110,10 +1181,14 @@ class EditorViewModel(
      */
     fun applyEffectSuggestions() {
         val state = _uiState.value
-        val effectAdds = state.editSuggestions.filterIsInstance<EditSuggestion.AddEffect>()
-        if (effectAdds.isEmpty()) return
+        val effectIndices = state.editSuggestions
+            .withIndex()
+            .filter { it.value is EditSuggestion.AddEffect }
+            .map { it.index }
+        if (effectIndices.isEmpty()) return
         var stack = state.effectStack
-        for (s in effectAdds) {
+        for (idx in effectIndices) {
+            val s = state.editSuggestions[idx] as EditSuggestion.AddEffect
             stack = stack.add(
                 EffectInstance(
                     definitionId = s.effectDefinitionId,
@@ -1124,7 +1199,12 @@ class EditorViewModel(
                 )
             )
         }
-        _uiState.update { it.copy(effectStack = stack) }
+        _uiState.update {
+            it.copy(
+                effectStack = stack,
+                appliedSuggestionIndices = it.appliedSuggestionIndices + effectIndices,
+            )
+        }
     }
 
     /** 진행 중인 오디오 분석 Job — 영상 교체 시 cancel 해 stale 결과로 덮이는 race 방지. */
