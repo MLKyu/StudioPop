@@ -1854,6 +1854,11 @@ class EditorViewModel(
             ?.let { designTokens.lut(it)?.recommendedIntensity }
             ?: 1f
 
+        // R6: effectStack 의 VIDEO_FX EffectInstance(Ken Burns / Zoom Punch) → Media3 Effect.
+        // Speed Ramp / SHORTS_PIECE 는 이번 라운드 미지원 — Resolver 가 자동으로 skip.
+        val videoFxEffects = com.mingeek.studiopop.data.editor.EffectStackVideoEffects
+            .build(state.effectStack, state.timeline)
+
         viewModelScope.launch {
             _uiState.update { it.copy(phase = ExportPhase.Running(0f)) }
             videoEditor.exportTimeline(
@@ -1861,6 +1866,7 @@ class EditorViewModel(
                 bgmDuckingTrack = duckingTrack,
                 lutId = themeLutId,
                 lutIntensity = themeLutIntensity,
+                videoFxEffects = videoFxEffects,
                 onProgress = { p ->
                     _uiState.update { s ->
                         if (s.phase is ExportPhase.Running) s.copy(phase = ExportPhase.Running(p))

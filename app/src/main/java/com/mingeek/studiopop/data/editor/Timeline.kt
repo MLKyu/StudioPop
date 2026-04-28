@@ -243,6 +243,28 @@ data class Timeline(
         return (0 until effective.size - 1).map { i -> starts[i] + effective[i].durationMs }
     }
 
+    /**
+     * source 시각 범위 [start, end] 가 effective 출력에서 차지하는 시간창 리스트.
+     * 한 source 범위가 여러 effective 세그먼트에 걸치면 여러 조각으로 쪼개져 반환된다.
+     * VideoEditor 의 SFX/짤/모자이크 + EffectStackVideoEffects 의 Ken Burns/Zoom Punch 가
+     * 출력 시각 기준으로 효과를 거는 데 사용.
+     */
+    fun rangeToOutputWindows(sourceStartMs: Long, sourceEndMs: Long): List<LongRange> {
+        val result = mutableListOf<LongRange>()
+        var accumulated = 0L
+        for (seg in effectiveSegments()) {
+            val overlapStart = maxOf(sourceStartMs, seg.sourceStartMs)
+            val overlapEnd = minOf(sourceEndMs, seg.sourceEndMs)
+            if (overlapEnd > overlapStart) {
+                val outStart = accumulated + (overlapStart - seg.sourceStartMs)
+                val outEnd = accumulated + (overlapEnd - seg.sourceStartMs)
+                result += outStart..outEnd
+            }
+            accumulated += seg.durationMs
+        }
+        return result
+    }
+
     /** 출력 시각 → (세그먼트, 해당 세그먼트 내부 source 시각) 매핑 — raw 기준. */
     fun mapOutputToSource(outputMs: Long): Pair<TimelineSegment, Long>? {
         var accumulated = 0L
