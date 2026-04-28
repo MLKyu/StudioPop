@@ -45,6 +45,7 @@ import com.mingeek.studiopop.data.ai.AiAssist
 import com.mingeek.studiopop.data.ai.DefaultAiAssist
 import com.mingeek.studiopop.data.ai.GeminiChapterPicker
 import com.mingeek.studiopop.data.ai.GeminiTagPicker
+import com.mingeek.studiopop.data.ai.GeminiToneAnalyzer
 import com.mingeek.studiopop.data.audio.AnalysisCache
 import com.mingeek.studiopop.data.audio.AudioAnalysisService
 import com.mingeek.studiopop.data.audio.BeatBus
@@ -257,6 +258,14 @@ class AppContainer(context: Context) {
         )
     }
 
+    val geminiToneAnalyzer: GeminiToneAnalyzer by lazy {
+        GeminiToneAnalyzer(
+            client = okHttpClient,
+            moshi = moshi,
+            apiKeyProvider = { apiKeyStore.getGemini() },
+        )
+    }
+
     val faceDetector: FaceDetector by lazy { FaceDetector() }
 
     val variantGenerator: VariantGenerator by lazy {
@@ -356,6 +365,7 @@ class AppContainer(context: Context) {
             tagPicker = geminiTagPicker,
             frameExtractor = frameExtractor,
             faceDetector = faceDetector,
+            toneAnalyzer = geminiToneAnalyzer,
         )
     }
 }

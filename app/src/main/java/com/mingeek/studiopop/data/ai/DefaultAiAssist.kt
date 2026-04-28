@@ -35,6 +35,11 @@ class DefaultAiAssist(
     private val tagPicker: GeminiTagPicker,
     private val frameExtractor: FrameExtractor,
     private val faceDetector: FaceDetector,
+    /**
+     * R6: Gemini 멀티모달 톤 분석. null 이면 기존 ToneEstimator 휴리스틱만으로 동작 (기존 동작
+     * 유지). 일반적으론 AppContainer 가 wire 해 줌.
+     */
+    private val toneAnalyzer: GeminiToneAnalyzer? = null,
 ) : AiAssist {
 
     /**
@@ -80,7 +85,8 @@ class DefaultAiAssist(
             val bmp = frameExtractor.extractFrame(uri, t) ?: continue
             frames += t to bmp
         }
-        // 2) 얼굴 감지(직렬 — ML Kit detector 가 thread-safe 하지 않음) + 톤 추정
+        // 2) 얼굴 감지(직렬 — ML Kit detector 가 thread-safe 하지 않음) + 톤 추정 + (선택)
+        //    Gemini 멀티모달 톤 분석. 후자는 네트워크 — 실패해도 분석 전체는 통과.
         return@withContext coroutineScope {
             val faceJob = async {
                 val out = mutableListOf<FaceKeyframe>()
@@ -91,8 +97,17 @@ class DefaultAiAssist(
                 }
                 out
             }
+            val aiToneJob = async {
+                val analyzer = toneAnalyzer ?: return@async null
+                if (frames.isEmpty()) null
+                else analyzer.analyze(
+                    keyframes = frames.map { it.second },
+                    topic = topic,
+                ).getOrNull()
+            }
             val tone = ToneEstimator.estimate(frames.map { pair -> pair.second })
             val faces = faceJob.await()
+            val aiTone = aiToneJob.await()
 
             // 3) 하이라이트 — 큐가 있고 주제가 주어지면 호출. 단일 추천이라 최대 1개 항목.
             val highlights: List<HighlightSpan> = if (srtCues.isNotEmpty() && !topic.isNullOrBlank() && durationMs > 0L) {
@@ -125,6 +140,7 @@ class DefaultAiAssist(
                 highlights = highlights,
                 keywords = keywords,
                 tone = tone,
+                aiTone = aiTone,
                 faces = if (faces.isEmpty()) emptyList() else listOf(
                     FaceTrack(trackId = 0, keyframes = faces)
                 ),
@@ -162,15 +178,27 @@ class DefaultAiAssist(
             )
         }
 
-        // 톤 분석 결과로 LUT 추천이 있으면 ApplyTheme 대신 AddEffect(LUT)
-        val lut = LutMatcher.match(analysis.tone)
-        if (lut != null) {
+        // R6: Gemini 의 의미적 톤 추천이 있으면 우선, 없으면 LutMatcher 휴리스틱 fallback.
+        //     LUT id 만 동일해도 rationale 의 출처를 사용자가 알 수 있게 분기 표시.
+        val aiLutId = analysis.aiTone?.recommendedLutId
+        val (lutId, lutRationale) = when {
+            aiLutId != null -> aiLutId to (
+                analysis.aiTone?.reasoning?.takeIf { it.isNotBlank() }?.let { "AI 톤 분석: $it" }
+                    ?: "AI 톤 분석으로 $aiLutId 추천"
+                )
+            else -> {
+                val lut = LutMatcher.match(analysis.tone)
+                if (lut != null) lut.id to "영상 톤 분석으로 ${lut.displayName} LUT 추천"
+                else null to ""
+            }
+        }
+        if (lutId != null) {
             out += EditSuggestion.AddEffect(
-                effectDefinitionId = "lut.${lut.id.removePrefix("lut.")}",
+                effectDefinitionId = "lut.${lutId.removePrefix("lut.")}",
                 sourceStartMs = 0L,
                 sourceEndMs = analysis.durationMs,
-                params = mapOf("lutId" to lut.id),
-                rationale = "영상 톤 분석으로 ${lut.displayName} LUT 추천",
+                params = mapOf("lutId" to lutId),
+                rationale = lutRationale,
             )
         }
 
@@ -301,6 +329,15 @@ class DefaultAiAssist(
         chapters: List<Chapter>,
     ): String = buildString {
         appendLine("📹 $topic")
+        analysis.aiTone?.let { t ->
+            val parts = mutableListOf<String>()
+            if (t.mood.isNotBlank()) parts += t.mood
+            if (t.descriptors.isNotEmpty()) parts += t.descriptors.joinToString(" · ")
+            if (parts.isNotEmpty()) {
+                appendLine()
+                appendLine("💫 분위기: ${parts.joinToString(" / ")}")
+            }
+        }
         if (chapters.isNotEmpty()) {
             appendLine()
             appendLine("⏱️ 챕터")
