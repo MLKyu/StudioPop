@@ -317,6 +317,7 @@ class DefaultAiAssist(
                 tags = tags.take(15),
                 chapters = chapters,
                 hashtags = tags.take(5).map { if (it.startsWith("#")) it else "#$it" },
+                aiTone = analysis.aiTone,
                 thumbnailVariants = variants,
                 shortsHighlights = highlights,
             )

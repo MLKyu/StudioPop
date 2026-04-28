@@ -76,6 +76,13 @@ fun AiPackageSheet(
     isSuggestionSupported: (EditSuggestion) -> Boolean = { s ->
         s is EditSuggestion.AddCaption || s is EditSuggestion.AddEffect
     },
+    /**
+     * R6: Gemini 멀티모달 톤 분석 결과. 비어 있지 않으면 별도 카드로 mood/descriptors/추천 LUT 노출.
+     * null 이면 섹션 자체 미표시.
+     */
+    aiTone: com.mingeek.studiopop.data.ai.AiToneAnalysis? = null,
+    /** AI 가 추천한 LUT 을 한 탭으로 적용. 호출 시 effectStack 에 lutId 인스턴스 추가. */
+    onApplyAiLut: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -146,6 +153,39 @@ fun AiPackageSheet(
             OutlinedButton(
                 onClick = { copyToClipboard(context, "description", pkg.description) },
             ) { Text("📋 설명 복사") }
+
+            // R6: AI 톤 분석 카드 — 무드/형용사/이유 + 추천 LUT 즉시 적용 버튼
+            if (aiTone != null && (aiTone.mood.isNotBlank() || aiTone.descriptors.isNotEmpty())) {
+                SectionTitle("💫 AI 톤 분석")
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        if (aiTone.mood.isNotBlank()) {
+                            Text(
+                                "무드: ${aiTone.mood}",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        if (aiTone.descriptors.isNotEmpty()) {
+                            Text(
+                                "키워드: ${aiTone.descriptors.joinToString(" · ")}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (aiTone.reasoning.isNotBlank()) {
+                            Text(
+                                aiTone.reasoning,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+                aiTone.recommendedLutId?.let { lutId ->
+                    OutlinedButton(
+                        onClick = { onApplyAiLut(lutId) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("🎨 AI 추천 LUT($lutId) 영상 전체 적용") }
+                }
+            }
 
             // 태그
             SectionTitle("태그 (${pkg.tags.size}개)")

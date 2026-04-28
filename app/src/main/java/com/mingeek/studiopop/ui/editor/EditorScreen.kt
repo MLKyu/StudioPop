@@ -596,9 +596,20 @@ fun EditorScreen(
                         onCutRangeTap = viewModel::deleteCutRange,
                         onCutRangeResize = viewModel::onCutRangeResize,
                         onCutRangeTranslate = viewModel::onCutRangeTranslate,
+                        onVideoFxTap = viewModel::openVideoFxEditor,
+                        onVideoFxResize = viewModel::resizeEffectInstance,
+                        onVideoFxTranslate = viewModel::translateEffectInstance,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+
+                // R6: 영상 효과 직접 추가 진입점 — AI 추천 흐름을 거치지 않고 사용자가 바로
+                // Ken Burns / Zoom Punch / LUT 을 effectStack 에 넣을 수 있게.
+                OutlinedButton(
+                    onClick = viewModel::openVideoFxAddSheet,
+                    enabled = state.hasVideo,
+                    modifier = Modifier.padding(horizontal = 8.dp).fillMaxWidth(),
+                ) { Text("🎬 영상 효과 추가") }
 
                 // Tier 2 옵션들: 전환 / BGM / 영상 교체 / SRT
                 OptionsRow(
@@ -719,8 +730,47 @@ fun EditorScreen(
                 onApplyCaptionSuggestions = viewModel::applyCaptionSuggestions,
                 onApplyEffectSuggestions = viewModel::applyEffectSuggestions,
                 isSuggestionSupported = viewModel::isSuggestionSupported,
+                aiTone = pkg.aiTone,
+                onApplyAiLut = viewModel::addLutEffectFull,
             )
         }
+    }
+
+    // R6: 영상 효과 추가 시트 (사용자 직접 진입)
+    if (state.showVideoFxAddSheet) {
+        com.mingeek.studiopop.ui.editor.components.VideoFxAddSheet(
+            onAddFxAtPlayhead = { defId, params ->
+                viewModel.addEffectInstanceAtPlayhead(defId, params = params)
+            },
+            onAddLutFull = viewModel::addLutEffectFull,
+            onDismiss = viewModel::closeVideoFxAddSheet,
+        )
+    }
+
+    // R6: VIDEO_FX 막대 탭 → 효과 편집 다이얼로그 (현재는 삭제만 노출, 시간 조정은 막대 핸들로)
+    state.editingVideoFxId?.let { fxId ->
+        val inst = state.effectStack.instances.firstOrNull { it.id == fxId }
+        val def = inst?.let { container.effectRegistry.get(it.definitionId) }
+        AlertDialog(
+            onDismissRequest = viewModel::closeVideoFxEditor,
+            title = { Text("🎬 ${def?.displayName ?: "영상 효과"}") },
+            text = {
+                Text(
+                    if (inst == null) "효과 정보가 없습니다."
+                    else "시간 범위 ${inst.sourceStartMs}ms ~ ${inst.sourceEndMs}ms\n" +
+                        "막대 양끝 핸들로 시간 범위 조정, 가운데 길게 누른 뒤 드래그로 이동.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.removeEffectInstance(fxId)
+                }) { Text("🗑 삭제") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::closeVideoFxEditor) { Text("닫기") }
+            },
+        )
     }
 
     // R5c1: AI 패키지 실패 시 사용자에게 안내
