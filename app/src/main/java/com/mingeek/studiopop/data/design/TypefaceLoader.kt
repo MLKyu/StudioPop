@@ -18,6 +18,14 @@ import java.util.concurrent.ConcurrentHashMap
  * 캐시: 같은 id 반복 조회는 동일 [Typeface] 인스턴스 반환. AssetManager 호출은 비싸므로 첫 회만.
  *
  * 글로벌 ApplicationContext 1개로 충분 — Application 라이프사이클과 동일.
+ *
+ * ### TODO — OFL 한글 폰트 드롭 (외부 결정 후)
+ * 1. SIL OFL 라이선스 한글 ttf 확보 — 권장: Pretendard(SUBTITLE/BODY), Black Han Sans /
+ *    Jalnan(DISPLAY_TITLE), Gamja Flower / DOSGothic(CHARACTER)
+ * 2. 파일을 `app/src/main/assets/fonts/<family>-Regular.ttf`, `-Bold.ttf` 등으로 배치
+ * 3. [FontPack] 정의에서 각 weight 슬롯의 [AssetSource.Bundled] path 를 일치시킴 — 이 클래스의
+ *    resolve() 가 자동으로 createFromAsset 시도, 실패 시 시스템 fallback (코드 변경 불필요)
+ * 4. ttf 추가 후 [invalidate] 호출 또는 앱 재시작으로 캐시 무효화
  */
 class TypefaceLoader(private val appContext: Context) {
 

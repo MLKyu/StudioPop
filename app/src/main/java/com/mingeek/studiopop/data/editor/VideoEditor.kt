@@ -172,6 +172,14 @@ class VideoEditor(
 
             val removeOriginalAudio = timeline.audioTrack?.replaceOriginal == true
             // 원본 오디오 AudioProcessor 체인: (center 추출) → (볼륨 조절). 모두 조건부.
+            //
+            // ### TODO — 노이즈 제거 (외부 모델 자산 필요, 미구현)
+            // RNNoise 또는 NSNet2 ONNX 모델로 원본 오디오의 hum/hiss/카페 잡음 제거 가능.
+            // 통합 자리: 이 체인의 가장 앞 (center 추출 전) — raw 16-bit PCM 받아 같은 포맷으로 반환.
+            //  1. 라이선스 호환 모델 확보 (RNNoise BSD / DTLN MIT 등)
+            //  2. `app/src/main/assets/audio_models/rnnoise.onnx` 배치
+            //  3. `RnnoiseAudioProcessor : BaseAudioProcessor` 신규 (onnxruntime-android 이미 deps)
+            //  4. `if (timeline.denoise) add(RnnoiseAudioProcessor(...))` 한 줄 추가
             val originalAudioProcessors = buildList<androidx.media3.common.audio.AudioProcessor> {
                 if (timeline.extractCenterChannel) add(CenterChannelAudioProcessor())
                 if (kotlin.math.abs(timeline.originalVolume - 1f) > 0.001f) {

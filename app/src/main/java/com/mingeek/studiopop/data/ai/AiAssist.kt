@@ -32,6 +32,15 @@ interface AiAssist {
     /**
      * 채널 과거 영상의 색·폰트·톤을 학습해 추천 테마 반환. R6 (헤비 항목) — R5 까지는 항상
      * StudioPop 기본 테마 반환.
+     *
+     * ### TODO — 외부 인증/리소스 필요 (현재는 stub)
+     *  - YouTube Data API v3 OAuth 인증 (Google Cloud 프로젝트 + clientId 설정)
+     *  - `channels.list` + `playlistItems.list` 로 최근 N편 videoId 수집
+     *  - 각 영상의 썸네일·설명·태그 다운로드 → Gemini Vision 으로 색 팔레트 / 폰트 톤 추출
+     *  - 다수 영상의 합으로 채널 평균 톤 → [ThemePack] 매칭. 비용 큼 — 결과 캐시 + 채널 단위 1회/일
+     *    refresh 권장
+     *  - 인증/할당량 부담으로 무료 라운드 스코프 밖. [com.mingeek.studiopop.data.settings.ApiKeyStore]
+     *    에 google.oauth.token 슬롯이 추가되면 활성화 가능
      */
     suspend fun suggestThemeFromHistory(channelId: String): Result<ThemePack>
 

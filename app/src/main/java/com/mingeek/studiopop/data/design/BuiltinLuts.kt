@@ -12,8 +12,15 @@ package com.mingeek.studiopop.data.design
  *  - Vintage: 빛바랜 색감 + 약간의 그레인.
  *  - Cool: 푸르스름한 톤. 여름·새벽.
  *
- * placeholder 가 가리키는 자산이 없는 LUT 효과를 호출하면 렌더러는 NOOP — 원본 영상이
- * 그대로 출력된다. 사용자에겐 LUT 카드는 보이지만 적용 효과는 없는 상태.
+ * 현재 상태: [SyntheticCubeLuts] 가 5종을 코드로 합성해 export 와 미리보기 양쪽에 적용되고
+ * 있어 .cube 파일 없이도 LUT 가 동작. 진짜 외부 .cube 자산을 쓰면 톤이 더 정교해짐.
+ *
+ * ### TODO — 무료 .cube 자산 드롭 (외부 결정 후)
+ * 1. CC0/MIT 라이선스 .cube 5종 확보 (예: lutify.it free pack, RocketStock 무료 LUT 등)
+ * 2. 파일을 `app/src/main/assets/luts/cinematic.cube`, `vivid.cube`, `mono.cube`,
+ *    `vintage.cube`, `cool.cube` 로 배치 — 이 파일들의 [AssetSource.Bundled] path 와 일치
+ * 3. [CubeLutLoader] 가 우선 로드 시도, 실패 시 [SyntheticCubeLuts] fallback (별도 코드 변경
+ *    불필요)
  */
 object BuiltinLuts {
 
