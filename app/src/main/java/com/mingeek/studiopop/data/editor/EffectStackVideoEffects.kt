@@ -9,15 +9,11 @@ import com.mingeek.studiopop.data.effects.builtins.VideoFxPresets
 import com.mingeek.studiopop.data.effects.builtins.ZoomPunchHelper
 
 /**
- * R6: [EffectStack] 의 영상 효과(VIDEO_FX) EffectInstance → Media3 [Effect] 변환.
- *
- * 1차 지원:
- *  - [VideoFxPresets.KEN_BURNS] → 시간 가변 카메라 줌·팬 ([CameraMatrixEffect])
- *  - [VideoFxPresets.ZOOM_PUNCH] → 짧은 스파이크 줌
- *
- * 후속 라운드:
- *  - [VideoFxPresets.SPEED_RAMP] — Media3 의 PTS 재작성/오디오 리샘플 인프라 통합 필요
- *  - SHORTS_PIECE 정형 인트로/아웃트로 — 텍스트 자산 모듈 확정 후
+ * R6+: [EffectStack] 의 영상 효과(VIDEO_FX) 중 [CameraMatrixEffect] 로 표현되는 카메라 무브 효과
+ * 들을 Media3 [Effect] 로 변환. 카메라 행렬 외 시간축 자체가 변하는 효과들은 별도 헬퍼:
+ *  - [VideoFxPresets.KEN_BURNS] / [VideoFxPresets.ZOOM_PUNCH] → 여기서 처리
+ *  - [VideoFxPresets.SPEED_RAMP] → [EffectStackSpeedRamp] (composition-level SpeedProvider)
+ *  - SHORTS_PIECE → [EffectStackShortsOverlays] (TextureOverlay)
  *
  * 한 EffectInstance 의 source 범위가 여러 effective 세그먼트(컷 분할 결과)에 걸치면
  * [Timeline.rangeToOutputWindows] 결과만큼 별개 [CameraMatrixEffect] 가 만들어진다 — 각각의 출력
@@ -34,7 +30,8 @@ object EffectStackVideoEffects {
             when (inst.definitionId) {
                 VideoFxPresets.KEN_BURNS -> out += buildKenBurns(inst, timeline)
                 VideoFxPresets.ZOOM_PUNCH -> out += buildZoomPunch(inst, timeline)
-                // SPEED_RAMP / SHORTS_PIECE / 기타: 미지원 — 이번 라운드 스코프 밖.
+                // SPEED_RAMP 는 EffectStackSpeedRamp 가, SHORTS_PIECE 는 EffectStackShortsOverlays
+                // 가 별도 처리. 기타 카테고리는 카메라 행렬 효과가 아니라 여기선 skip.
                 else -> Unit
             }
         }
