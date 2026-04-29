@@ -126,10 +126,20 @@ class VideoEditor(
          * R6: 적용할 컬러 LUT id (예: BuiltinLuts.CINEMATIC.id). null/미등록 이면 LUT 미적용.
          * [SyntheticCubeLuts] 가 코드로 5종 큐브를 만들어 [LutColorEffect] 가 Media3
          * SingleColorLut 으로 변환 — 영상의 색감이 자막/오버레이 합성 전 원본 픽셀에 적용됨.
+         *
+         * [perSegmentLutIds] 가 effective 세그먼트 수와 길이가 맞으면 그쪽이 우선 — 이 파라미터
+         * 는 무시. fallback / 단일 LUT 호출자용.
          */
         lutId: String? = null,
         /** 0..1. LUT 강도 — 1=완전 적용, 0=원본. null 이면 1f. */
         lutIntensity: Float = 1f,
+        /**
+         * R6: effective 세그먼트별 LUT id. 길이가 [Timeline.effectiveSegments] 와 맞으면 각 세그
+         * 먼트의 [EditedMediaItem] 에 SingleColorLut 을 직접 부여 — 시간별 다른 톤이 export 영상에
+         * 그대로 박힘. 빈 리스트 또는 길이 불일치 시 composition-level [lutId] 경로로 폴백.
+         * 보통 [com.mingeek.studiopop.data.effects.EffectStackResolver.resolvePerSegmentLuts] 로 계산.
+         */
+        perSegmentLutIds: List<String?> = emptyList(),
         /**
          * R6: 호출 측이 [com.mingeek.studiopop.data.effects.EffectStack] 을 미리
          * Media3 [Effect] 로 변환해 넘긴 결과 — Ken Burns / Zoom Punch 같은 시간 가변 카메라 무브.
@@ -156,7 +166,11 @@ class VideoEditor(
                     add(VolumeAudioProcessor(timeline.originalVolume))
                 }
             }
-            val videoItems = effective.map { seg ->
+            // per-segment LUT 모드: 길이가 effective 세그먼트 수와 정확히 맞을 때만 활성. 한 entry라도
+            // non-null 이어야 의미 있음 (전부 null 이면 composition-level lutId 로 폴백).
+            val perSegmentMode = perSegmentLutIds.size == effective.size &&
+                perSegmentLutIds.any { it != null }
+            val videoItems = effective.mapIndexed { idx, seg ->
                 val start = seg.sourceStartMs.coerceAtLeast(0L)
                 val end = seg.sourceEndMs.coerceAtLeast(start)
                 val mediaItem = MediaItem.Builder()
@@ -168,13 +182,19 @@ class VideoEditor(
                             .build()
                     )
                     .build()
+                val perItemLutEffect = if (perSegmentMode) {
+                    LutColorEffect.forLutId(perSegmentLutIds[idx], lutIntensity)
+                } else null
+                val perItemVideoEffects: ImmutableList<Effect> = if (perItemLutEffect != null) {
+                    ImmutableList.of(perItemLutEffect)
+                } else ImmutableList.of()
+                val itemAudioProcessors = if (!removeOriginalAudio) originalAudioProcessors else emptyList()
+                val hasItemEffects = itemAudioProcessors.isNotEmpty() || perItemVideoEffects.isNotEmpty()
                 EditedMediaItem.Builder(mediaItem)
                     .setRemoveAudio(removeOriginalAudio)
                     .apply {
-                        if (!removeOriginalAudio && originalAudioProcessors.isNotEmpty()) {
-                            setEffects(
-                                Effects(originalAudioProcessors, ImmutableList.of())
-                            )
+                        if (hasItemEffects) {
+                            setEffects(Effects(itemAudioProcessors, perItemVideoEffects))
                         }
                     }
                     .build()
@@ -241,7 +261,10 @@ class VideoEditor(
             //  2. videoFxEffects (Ken Burns / Zoom Punch) — 카메라 무브, 색감과 무관해 LUT 뒤.
             //  3. Presentation (종횡비) — 출력 프레임 크기 결정.
             //  4. OverlayEffect (자막/짤/모자이크) — 시청자에게 보이는 마지막 합성.
-            val lutEffect = LutColorEffect.forLutId(lutId, lutIntensity)
+            // per-segment 모드일 땐 composition-level LUT 를 다시 얹지 않음 — 이미 EditedMediaItem
+            // 단위로 SingleColorLut 이 부여돼 있어 중복 적용되면 색이 두 번 변환됨.
+            val lutEffect = if (perSegmentMode) null
+            else LutColorEffect.forLutId(lutId, lutIntensity)
             val videoEffects = ImmutableList.Builder<Effect>().apply {
                 lutEffect?.let { add(it) }
                 videoFxEffects.forEach { add(it) }
