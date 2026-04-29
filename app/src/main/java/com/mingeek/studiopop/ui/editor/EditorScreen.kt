@@ -747,30 +747,26 @@ fun EditorScreen(
         )
     }
 
-    // R6: VIDEO_FX 막대 탭 → 효과 편집 다이얼로그 (현재는 삭제만 노출, 시간 조정은 막대 핸들로)
+    // R6: VIDEO_FX 막대 탭 → 효과 편집 시트 (intensity/direction 등 EffectDefinition.parameters
+    // 명세에 따라 슬라이더/칩 자동 렌더). 시간 조정은 막대 핸들이 별도 처리.
     state.editingVideoFxId?.let { fxId ->
         val inst = state.effectStack.instances.firstOrNull { it.id == fxId }
-        val def = inst?.let { container.effectRegistry.get(it.definitionId) }
-        AlertDialog(
-            onDismissRequest = viewModel::closeVideoFxEditor,
-            title = { Text("🎬 ${def?.displayName ?: "영상 효과"}") },
-            text = {
-                Text(
-                    if (inst == null) "효과 정보가 없습니다."
-                    else "시간 범위 ${inst.sourceStartMs}ms ~ ${inst.sourceEndMs}ms\n" +
-                        "막대 양끝 핸들로 시간 범위 조정, 가운데 길게 누른 뒤 드래그로 이동.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
+        if (inst != null) {
+            val def = container.effectRegistry.get(inst.definitionId)
+            com.mingeek.studiopop.ui.editor.components.VideoFxEditSheet(
+                instance = inst,
+                definition = def,
+                onApply = { newParams ->
+                    viewModel.updateEffectInstanceParams(fxId, newParams)
+                    viewModel.closeVideoFxEditor()
+                },
+                onDelete = {
                     viewModel.removeEffectInstance(fxId)
-                }) { Text("🗑 삭제") }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::closeVideoFxEditor) { Text("닫기") }
-            },
-        )
+                    viewModel.closeVideoFxEditor()
+                },
+                onDismiss = viewModel::closeVideoFxEditor,
+            )
+        }
     }
 
     // R5c1: AI 패키지 실패 시 사용자에게 안내

@@ -1853,6 +1853,21 @@ class EditorViewModel(
         _uiState.update { it.copy(showVideoFxAddSheet = false) }
     }
 
+    /**
+     * EffectInstance 의 params 를 일괄 갱신 — 사용자가 편집 시트에서 슬라이더/칩으로 조정한 결과.
+     * 시간 범위(start/end) 는 막대 핸들이 별도로 처리하므로 여기선 건드리지 않음.
+     */
+    fun updateEffectInstanceParams(id: String, newParams: Map<String, Any>) {
+        _uiState.update { state ->
+            val stack = state.effectStack
+            val inst = stack.instances.firstOrNull { it.id == id } ?: return@update state
+            val updated = inst.copy(
+                params = com.mingeek.studiopop.data.effects.EffectParamValues(newParams),
+            )
+            state.copy(effectStack = stack.update(updated))
+        }
+    }
+
     /** EffectStack 에서 인스턴스 제거. 편집 시트가 열려 있으면 같이 닫음. */
     fun removeEffectInstance(id: String) {
         _uiState.update {
@@ -1983,13 +1998,24 @@ class EditorViewModel(
                 fallbackLutId = theme.lutId,
             )
 
-        // R6: effectStack 의 VIDEO_FX EffectInstance(Ken Burns / Zoom Punch) → Media3 Effect.
+        // R6+: effectStack 의 VIDEO_FX EffectInstance(Ken Burns / Zoom Punch) → Media3 Effect.
         // SHORTS_PIECE intro/outro 는 별도 helper 가 default 한국어 카피로 TextureOverlay 생성.
-        // Speed Ramp 만 미지원 — Resolver 가 자동 skip.
+        // Speed Ramp 는 EffectStackSpeedRamp 가 SpeedProvider 로 별도 처리.
         val videoFxEffects = com.mingeek.studiopop.data.editor.EffectStackVideoEffects
             .build(state.effectStack, state.timeline)
         val shortsOverlays = com.mingeek.studiopop.data.editor.EffectStackShortsOverlays
             .build(state.effectStack, state.timeline)
+        // R7: 강조어 폭탄자막 export. captionBombIds 비어 있으면 빈 리스트 반환되니 비용 0.
+        val bombCaptionOverlays = com.mingeek.studiopop.data.editor.BombCaptionExport.build(
+            timeline = state.timeline,
+            bombCaptionIds = state.captionBombIds,
+            captionWords = state.captionWords,
+        )
+        // R7: SPEED_RAMP — 활성 인스턴스 없으면 null 반환되어 effect 자체가 추가 안 됨.
+        val speedProvider = com.mingeek.studiopop.data.editor.EffectStackSpeedRamp.build(
+            stack = state.effectStack,
+            timeline = state.timeline,
+        )
 
         viewModelScope.launch {
             _uiState.update { it.copy(phase = ExportPhase.Running(0f)) }
@@ -2001,6 +2027,8 @@ class EditorViewModel(
                 perSegmentLutIds = perSegmentLutIds,
                 videoFxEffects = videoFxEffects,
                 shortsOverlays = shortsOverlays,
+                bombCaptionOverlays = bombCaptionOverlays,
+                speedProvider = speedProvider,
                 onProgress = { p ->
                     _uiState.update { s ->
                         if (s.phase is ExportPhase.Running) s.copy(phase = ExportPhase.Running(p))

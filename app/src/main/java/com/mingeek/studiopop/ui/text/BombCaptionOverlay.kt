@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import com.mingeek.studiopop.data.caption.CueWord
+import com.mingeek.studiopop.data.editor.BombCaptionExport
 import com.mingeek.studiopop.data.editor.Timeline
 import com.mingeek.studiopop.data.editor.TimelineCaption
 import kotlin.math.PI
@@ -53,7 +54,7 @@ fun BombCaptionOverlay(
         timeline.captions
             .filter { it.id in bombCaptionIds }
             .filter { currentSourceMs in it.sourceStartMs..it.sourceEndMs }
-            .mapNotNull { cap -> resolveBomb(cap, captionWords[cap.id]) }
+            .mapNotNull { cap -> BombCaptionExport.resolveBombInfo(cap, captionWords[cap.id]) }
             .filter { currentSourceMs in it.startMs..it.endMs }
     }
     if (active.isEmpty()) return
@@ -90,42 +91,7 @@ fun BombCaptionOverlay(
     }
 }
 
-/** [TimelineCaption] 한 개 + 선택적 word timing 으로 폭탄 발사 정보를 결정. */
-internal fun resolveBomb(caption: TimelineCaption, words: List<CueWord>?): BombInfo? {
-    val tokens = caption.text.split(Regex("\\s+")).filter { it.isNotBlank() }
-    if (tokens.isEmpty()) return null
-
-    // STT word 가 있으면 가장 긴 단어 픽, [startMs..endMs] 그대로 사용.
-    if (!words.isNullOrEmpty()) {
-        val pick = words
-            .filter { it.word.isNotBlank() && it.word.length >= 2 }
-            .maxByOrNull { it.word.length }
-        if (pick != null) {
-            return BombInfo(
-                word = pick.word,
-                startMs = pick.startMs,
-                endMs = pick.endMs.coerceAtLeast(pick.startMs + 1L),
-            )
-        }
-    }
-
-    // fallback: 큐 텍스트의 가장 긴 토큰을 큐 시작 직후에 폭발.
-    val longest = tokens.maxByOrNull { it.length } ?: return null
-    val start = caption.sourceStartMs + BOMB_FALLBACK_OFFSET_MS
-    val end = (start + BOMB_FALLBACK_DURATION_MS).coerceAtMost(caption.sourceEndMs)
-    if (end <= start) return null
-    return BombInfo(word = longest, startMs = start, endMs = end)
-}
-
-internal data class BombInfo(
-    val word: String,
-    val startMs: Long,
-    val endMs: Long,
-)
-
 private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
 private const val BOMB_FONT_SIZE_SP = 56f
 private const val BOMB_JITTER_DP = 6f
-private const val BOMB_FALLBACK_OFFSET_MS = 80L
-private const val BOMB_FALLBACK_DURATION_MS = 600L

@@ -34,10 +34,11 @@ object EffectStackShortsOverlays {
         val out = mutableListOf<TextureOverlay>()
         for (inst in stack.instances) {
             if (!inst.enabled) continue
-            // COUNTDOWN_3 는 한 인스턴스가 3개 cue("3"/"2"/"1") 로 펼쳐짐 — 별도 분기.
+            // COUNTDOWN_3: 한 인스턴스 → 3개 펄스 애니 세그먼트("3"/"2"/"1"). cut 분할 시 첫 윈도우만
+            // 사용 (시간 연속성 보존).
             if (inst.definitionId == IntroOutroPresets.COUNTDOWN_3) {
-                val cues = buildCountdownCues(inst, timeline)
-                if (cues.isNotEmpty()) out += CaptionOverlay(cues, STYLE_COUNTDOWN)
+                val segments = buildCountdownSegments(inst, timeline)
+                if (segments.isNotEmpty()) out += AnimatedTextOverlay(segments, STYLE_COUNTDOWN)
                 continue
             }
             val text = inst.params.values[PARAM_TEXT] as? String
@@ -72,27 +73,37 @@ object EffectStackShortsOverlays {
     }
 
     /**
-     * COUNTDOWN_3: 인스턴스의 source 범위를 3등분해 "3"/"2"/"1" 한 글자씩 노출. cut 분할 시 첫
-     * effective 윈도우만 사용 — 카운트다운은 시간 연속성이 핵심이라 분할되면 의미가 깨짐.
+     * COUNTDOWN_3: 인스턴스의 source 범위를 3등분해 "3"/"2"/"1" 한 글자씩 노출 + 펄스 애니메이션.
+     * cut 분할 시 첫 effective 윈도우만 사용 — 카운트다운은 시간 연속성이 핵심이라 분할되면 의미
+     * 가 깨짐.
      */
-    private fun buildCountdownCues(inst: EffectInstance, timeline: Timeline): List<Cue> {
+    private fun buildCountdownSegments(inst: EffectInstance, timeline: Timeline): List<AnimatedSegment> {
         val window = timeline.rangeToOutputWindows(inst.sourceStartMs, inst.sourceEndMs)
             .firstOrNull() ?: return emptyList()
         return splitCountdownWindow(window.first, window.last)
     }
 
     /**
-     * pure 함수: 출력 시각 [outStart, outEnd] 를 3등분해 "3"/"2"/"1" Cue 생성. span 이 너무 짧으면
-     * 900ms 로 floor — 시청자가 한 자라도 인식 가능한 최소 노출 시간. Timeline 비의존이라 단위
-     * 테스트에서 직접 검증 가능.
+     * pure 함수: 출력 시각 [outStart, outEnd] 를 3등분해 "3"/"2"/"1" 펄스 세그먼트 생성. span 이
+     * 너무 짧으면 900ms 로 floor — 시청자가 한 자라도 인식 가능한 최소 노출 시간. Timeline 비의존
+     * 이라 단위 테스트에서 직접 검증 가능.
      */
-    internal fun splitCountdownWindow(outStart: Long, outEnd: Long): List<Cue> {
+    internal fun splitCountdownWindow(outStart: Long, outEnd: Long): List<AnimatedSegment> {
         val span = (outEnd - outStart).coerceAtLeast(900L)
         val third = span / 3
         return listOf(
-            Cue(index = 1, startMs = outStart, endMs = outStart + third, text = "3"),
-            Cue(index = 2, startMs = outStart + third, endMs = outStart + 2 * third, text = "2"),
-            Cue(index = 3, startMs = outStart + 2 * third, endMs = outEnd, text = "1"),
+            AnimatedSegment(
+                startMs = outStart, endMs = outStart + third, text = "3",
+                animator = Animators::countdownPulse,
+            ),
+            AnimatedSegment(
+                startMs = outStart + third, endMs = outStart + 2 * third, text = "2",
+                animator = Animators::countdownPulse,
+            ),
+            AnimatedSegment(
+                startMs = outStart + 2 * third, endMs = outEnd, text = "1",
+                animator = Animators::countdownPulse,
+            ),
         )
     }
 

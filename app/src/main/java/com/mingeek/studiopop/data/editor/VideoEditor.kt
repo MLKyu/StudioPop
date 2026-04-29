@@ -152,6 +152,18 @@ class VideoEditor(
          * 결과를 호출 측이 미리 준비. 자막/짤 같은 일반 오버레이와 함께 OverlayEffect 에 합류.
          */
         shortsOverlays: List<TextureOverlay> = emptyList(),
+        /**
+         * R7: 강조어 폭탄자막 export 오버레이. [BombCaptionExport.build] 결과를 호출 측에서
+         * 준비 — 시간 가변 scale/jitter/페이드를 [AnimatedTextOverlay] 로 export 영상에 박음.
+         */
+        bombCaptionOverlays: List<TextureOverlay> = emptyList(),
+        /**
+         * R7: SPEED_RAMP 적용 [SpeedProvider]. null 이면 속도 변화 없음 (현 동작 유지). 값이 있으면
+         * composition 레벨 [SpeedChangeEffect] (video) + [SpeedChangingAudioProcessor] (audio) 양쪽에
+         * 같은 SpeedProvider 가 꽂혀 audio/video 시간축이 동기화된다. 자막/오버레이는 SpeedChange
+         * 보다 앞 단계에서 합성돼 함께 재시간화.
+         */
+        speedProvider: androidx.media3.common.audio.SpeedProvider? = null,
     ): Result<File> = withContext(Dispatchers.Main) {
         runCatching {
             val effective = timeline.effectiveSegments()
@@ -170,6 +182,10 @@ class VideoEditor(
             // non-null 이어야 의미 있음 (전부 null 이면 composition-level lutId 로 폴백).
             val perSegmentMode = perSegmentLutIds.size == effective.size &&
                 perSegmentLutIds.any { it != null }
+            // Speed Ramp 시 audio 는 per-item 으로만 처리 — composition-level 에 두면 BGM/SFX 까지
+            // 함께 warp 되어 음악 지속이 깨짐. 각 영상 item 의 audio processor 체인 끝에 시간축 평행
+            // 이동된 SpeedChangingAudioProcessor 를 붙여 video 와 동기화.
+            var accumulatedMs = 0L
             val videoItems = effective.mapIndexed { idx, seg ->
                 val start = seg.sourceStartMs.coerceAtLeast(0L)
                 val end = seg.sourceEndMs.coerceAtLeast(start)
@@ -188,7 +204,24 @@ class VideoEditor(
                 val perItemVideoEffects: ImmutableList<Effect> = if (perItemLutEffect != null) {
                     ImmutableList.of(perItemLutEffect)
                 } else ImmutableList.of()
-                val itemAudioProcessors = if (!removeOriginalAudio) originalAudioProcessors else emptyList()
+                val itemDurationAfterClipMs = (end - start).coerceAtLeast(0L)
+                val itemAudioProcessors = buildList<androidx.media3.common.audio.AudioProcessor> {
+                    if (!removeOriginalAudio) addAll(originalAudioProcessors)
+                    // zero-duration item 에 SpeedChangingAudioProcessor 를 붙이면 Sonic init/flush 가
+                    // 비정상 입력으로 throw 가능 — 0 길이 클립은 그냥 통과시킴.
+                    if (!removeOriginalAudio && speedProvider != null && itemDurationAfterClipMs > 0L) {
+                        // item 시작이 composition-time accumulatedMs 이므로 item-relative time 을 그
+                        // offset 만큼 평행 이동시켜 base SpeedProvider 와 동일 속도가 나오게 함.
+                        val translated = EffectStackSpeedRamp.TranslatedSpeedProvider(
+                            base = speedProvider,
+                            offsetUs = accumulatedMs * 1_000L,
+                        )
+                        add(androidx.media3.common.audio.SpeedChangingAudioProcessor(translated))
+                    }
+                }
+                // 클립 후 실제 길이로 카운터 누적 — seg.durationMs 는 source 좌표라 sourceStartMs 가
+                // 음수처럼 비정상이면 실제 (end-start) 와 어긋남 → SpeedProvider offset drift.
+                accumulatedMs += itemDurationAfterClipMs
                 val hasItemEffects = itemAudioProcessors.isNotEmpty() || perItemVideoEffects.isNotEmpty()
                 EditedMediaItem.Builder(mediaItem)
                     .setRemoveAudio(removeOriginalAudio)
@@ -255,12 +288,16 @@ class VideoEditor(
             val (frameW, frameH) = withContext(Dispatchers.IO) {
                 readFrameSize(effective.first().sourceUri)
             } ?: DEFAULT_FRAME_SIZE
-            val overlays = buildOverlayList(timeline, frameW, frameH) + shortsOverlays
+            val overlays = buildOverlayList(timeline, frameW, frameH) +
+                shortsOverlays +
+                bombCaptionOverlays
             // 효과 체인 순서:
             //  1. LUT — raw 영상 픽셀의 색감 변환. 오버레이 가독성 보호 위해 가장 앞.
             //  2. videoFxEffects (Ken Burns / Zoom Punch) — 카메라 무브, 색감과 무관해 LUT 뒤.
             //  3. Presentation (종횡비) — 출력 프레임 크기 결정.
             //  4. OverlayEffect (자막/짤/모자이크) — 시청자에게 보이는 마지막 합성.
+            //  5. SpeedChangeEffect — 가장 마지막. 앞 단계에서 만든 모든 합성물의 PTS 를 재시간화.
+            //     같은 SpeedProvider 가 audio 쪽 SpeedChangingAudioProcessor 에도 들어가 동기화.
             // per-segment 모드일 땐 composition-level LUT 를 다시 얹지 않음 — 이미 EditedMediaItem
             // 단위로 SingleColorLut 이 부여돼 있어 중복 적용되면 색이 두 번 변환됨.
             val lutEffect = if (perSegmentMode) null
@@ -279,8 +316,17 @@ class VideoEditor(
                 if (overlays.isNotEmpty()) {
                     add(OverlayEffect(ImmutableList.copyOf(overlays)))
                 }
+                speedProvider?.let {
+                    // MUST stay last in chain: SpeedChangeShaderProgram 이 downstream 으로 warped
+                    // PTS 를 흘림. Overlay 보다 뒤에 둬야 OverlayEffect 가 pre-speed source-time T_in
+                    // 으로 호출됨 — 같은 T_in 이 SpeedChangingAudioProcessor 의 audio 키이기도 해서
+                    // viewer wall-clock 에서 영상/오버레이/오디오 모두 동기화. 순서 뒤집으면 desync.
+                    add(androidx.media3.effect.SpeedChangeEffect(it))
+                }
             }.build()
 
+            // composition-level audio processors 는 현재 빈 상태. Speed Ramp 의 audio side 는 video
+            // sequence 의 per-EditedMediaItem audio processor 로 이미 처리돼 BGM/SFX 는 영향 없음.
             val composition = Composition.Builder(sequences.toList())
                 .setEffects(Effects(emptyList(), videoEffects))
                 .build()

@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mingeek.studiopop.data.design.BuiltinLuts
+import com.mingeek.studiopop.data.effects.builtins.IntroOutroPresets
 import com.mingeek.studiopop.data.effects.builtins.VideoFxPresets
 
 /**
@@ -30,10 +31,9 @@ import com.mingeek.studiopop.data.effects.builtins.VideoFxPresets
  * 효과를 한 탭으로 선택. AI 추천 흐름을 통하지 않고 직접 추가하고 싶을 때.
  *
  * 노출 항목:
- *  - VIDEO_FX: Ken Burns(방향 5종) / Zoom Punch
+ *  - VIDEO_FX: Ken Burns(방향 5종) / Zoom Punch / Speed Ramp(slow → normal)
  *  - LUT: 5종 합성 (Cinematic / Vivid / Mono / Vintage / Cool)
- *
- * Speed Ramp / SHORTS_PIECE 는 export 미지원이라 제외 — 추가해 봐야 영상에 안 박힘.
+ *  - SHORTS_PIECE: 인트로/아웃트로 텍스트 5종 (default 한국어 카피, 막대 드래그로 위치 조정)
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -93,6 +93,17 @@ fun VideoFxAddSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("💥 Zoom Punch 추가") }
 
+            OutlinedButton(
+                onClick = {
+                    onAddFxAtPlayhead(
+                        VideoFxPresets.SPEED_RAMP,
+                        // 슬로우 모션 (40% 속도) → 정상 속도. 막대 늘리면 ramp duration 길어짐.
+                        mapOf("minSpeed" to 0.4f, "maxSpeed" to 1.0f),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("🌀 Speed Ramp (슬로우→정상) 추가") }
+
             Text("LUT (영상 전체 색감)", style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 BuiltinLuts.ALL.forEach { lut ->
@@ -103,8 +114,39 @@ fun VideoFxAddSheet(
                     )
                 }
             }
+
+            // 인트로/아웃트로 텍스트 — 플레이헤드 위치에 default 카피로 추가. 막대 드래그로 영상
+            // 시작/끝으로 옮겨 사용. 텍스트는 EffectStackShortsOverlays 가 default 한국어로 채움.
+            Text("인트로/아웃트로 텍스트", style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ShortsPieceEntry.entries.forEach { entry ->
+                    FilterChip(
+                        selected = false,
+                        onClick = {
+                            onAddFxAtPlayhead(entry.definitionId, emptyMap())
+                        },
+                        label = { Text("${entry.emoji} ${entry.label}") },
+                    )
+                }
+            }
         }
     }
+}
+
+/**
+ * 인트로/아웃트로 sheet 표시용 enum — IntroOutroPresets 의 displayName 보다 짧게 줄임 (sheet
+ * chip 너비 제한). COUNTDOWN_3 은 텍스트 cue fallback 으로 export 됨 (애니메이션 비주얼은 별개).
+ */
+private enum class ShortsPieceEntry(
+    val definitionId: String,
+    val emoji: String,
+    val label: String,
+) {
+    HOOK(IntroOutroPresets.HOOK_TITLE, "🎬", "후킹 타이틀"),
+    SIMPLE(IntroOutroPresets.SIMPLE_TITLE, "📝", "심플 타이틀"),
+    COUNTDOWN(IntroOutroPresets.COUNTDOWN_3, "⏱️", "3·2·1 카운트다운"),
+    SUBSCRIBE(IntroOutroPresets.SUBSCRIBE_PROMPT, "🔔", "구독 유도"),
+    NEXT_EPISODE(IntroOutroPresets.NEXT_EPISODE_CARD, "➡️", "다음 영상 카드"),
 }
 
 private fun directionLabel(d: VideoFxPresets.KenBurnsDirection): String = when (d) {
