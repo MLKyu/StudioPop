@@ -18,11 +18,11 @@ import com.mingeek.studiopop.data.effects.builtins.IntroOutroPresets
  *  - SUBSCRIBE_PROMPT: 아웃트로 구독 유도 — 화면 중앙, 큰 흰 굵은 글씨
  *  - SIMPLE_TITLE: 인트로 디졸브 타이틀 — 화면 가운데
  *  - NEXT_EPISODE_CARD: 아웃트로 다음 영상 카드 — 화면 하단
- *
- * 미지원: COUNTDOWN_3 (애니메이션 카운트다운 — 별도 BitmapOverlay 작업 필요)
+ *  - COUNTDOWN_3: source 범위 3등분해 "3"/"2"/"1" — 풀스크린 정중앙, 매우 큰 글씨
  *
  * cut 분할 대응: 한 EffectInstance 의 source 범위가 여러 effective 세그먼트에 걸치면 윈도우당
- * 하나씩 Cue 가 만들어져 동일 [CaptionOverlay] 안에 묶여 들어감.
+ * 하나씩 Cue 가 만들어져 동일 [CaptionOverlay] 안에 묶여 들어감 (COUNTDOWN_3 만 예외 — 첫
+ * 윈도우만 사용).
  */
 @UnstableApi
 object EffectStackShortsOverlays {
@@ -34,13 +34,18 @@ object EffectStackShortsOverlays {
         val out = mutableListOf<TextureOverlay>()
         for (inst in stack.instances) {
             if (!inst.enabled) continue
+            // COUNTDOWN_3 는 한 인스턴스가 3개 cue("3"/"2"/"1") 로 펼쳐짐 — 별도 분기.
+            if (inst.definitionId == IntroOutroPresets.COUNTDOWN_3) {
+                val cues = buildCountdownCues(inst, timeline)
+                if (cues.isNotEmpty()) out += CaptionOverlay(cues, STYLE_COUNTDOWN)
+                continue
+            }
             val text = inst.params.values[PARAM_TEXT] as? String
             val (resolvedText, style) = when (inst.definitionId) {
                 IntroOutroPresets.HOOK_TITLE -> (text ?: DEFAULT_HOOK_TITLE) to STYLE_HOOK
                 IntroOutroPresets.SUBSCRIBE_PROMPT -> (text ?: DEFAULT_SUBSCRIBE) to STYLE_SUBSCRIBE
                 IntroOutroPresets.SIMPLE_TITLE -> (text ?: DEFAULT_SIMPLE_TITLE) to STYLE_SIMPLE
                 IntroOutroPresets.NEXT_EPISODE_CARD -> (text ?: DEFAULT_NEXT_EPISODE) to STYLE_NEXT
-                // COUNTDOWN_3 / 기타: 미지원
                 else -> continue
             }
             val cues = inst.toCuesInOutputTime(timeline, resolvedText)
@@ -64,6 +69,31 @@ object EffectStackShortsOverlays {
                 text = text,
             )
         }
+    }
+
+    /**
+     * COUNTDOWN_3: 인스턴스의 source 범위를 3등분해 "3"/"2"/"1" 한 글자씩 노출. cut 분할 시 첫
+     * effective 윈도우만 사용 — 카운트다운은 시간 연속성이 핵심이라 분할되면 의미가 깨짐.
+     */
+    private fun buildCountdownCues(inst: EffectInstance, timeline: Timeline): List<Cue> {
+        val window = timeline.rangeToOutputWindows(inst.sourceStartMs, inst.sourceEndMs)
+            .firstOrNull() ?: return emptyList()
+        return splitCountdownWindow(window.first, window.last)
+    }
+
+    /**
+     * pure 함수: 출력 시각 [outStart, outEnd] 를 3등분해 "3"/"2"/"1" Cue 생성. span 이 너무 짧으면
+     * 900ms 로 floor — 시청자가 한 자라도 인식 가능한 최소 노출 시간. Timeline 비의존이라 단위
+     * 테스트에서 직접 검증 가능.
+     */
+    internal fun splitCountdownWindow(outStart: Long, outEnd: Long): List<Cue> {
+        val span = (outEnd - outStart).coerceAtLeast(900L)
+        val third = span / 3
+        return listOf(
+            Cue(index = 1, startMs = outStart, endMs = outStart + third, text = "3"),
+            Cue(index = 2, startMs = outStart + third, endMs = outStart + 2 * third, text = "2"),
+            Cue(index = 3, startMs = outStart + 2 * third, endMs = outEnd, text = "1"),
+        )
     }
 
     // 화자 분리 SRT 와의 충돌 방지: 모두 단순 한국어 한 줄.
@@ -96,5 +126,12 @@ object EffectStackShortsOverlays {
         anchorY = -0.6f,
         anchorX = 0f,
         sizeScale = 1.2f,
+    )
+    /** 카운트다운 — 화면 정중앙, GACHA 노란 굵은. 숫자 한 글자라 매우 큰 sizeScale. */
+    private val STYLE_COUNTDOWN = CaptionStyle(
+        preset = CaptionPreset.GACHA,
+        anchorY = 0f,
+        anchorX = 0f,
+        sizeScale = 3.0f,
     )
 }

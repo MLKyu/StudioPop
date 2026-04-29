@@ -1965,6 +1965,10 @@ class EditorViewModel(
         // theme.lutId. effectStack 의 LUT 은 AI suggestEdits 가 추천한 것 또는 사용자가 명시적
         // 으로 적용한 것으로, theme 보다 의도가 강하다고 보고 우선. 강도는 LUT 자산 메타의
         // recommendedIntensity 사용.
+        //
+        // perSegmentLutIds 는 각 effective 세그먼트별 LUT — 시간별로 다른 톤이 가능. theme.lutId
+        // 를 fallback 으로 줘서 LUT EffectInstance 가 없는 구간엔 theme 톤이 박힘. lutId/lutIntensity
+        // 는 단일 LUT export 호출 호환용 — perSegmentLutIds 가 매칭되면 무시됨.
         val theme = designTokens.theme(state.selectedThemeId)
         val stackLutId = com.mingeek.studiopop.data.effects.EffectStackResolver
             .resolveActiveLutId(state.effectStack)
@@ -1972,6 +1976,12 @@ class EditorViewModel(
         val themeLutIntensity = themeLutId
             ?.let { designTokens.lut(it)?.recommendedIntensity }
             ?: 1f
+        val perSegmentLutIds = com.mingeek.studiopop.data.effects.EffectStackResolver
+            .resolvePerSegmentLuts(
+                stack = state.effectStack,
+                timeline = state.timeline,
+                fallbackLutId = theme.lutId,
+            )
 
         // R6: effectStack 의 VIDEO_FX EffectInstance(Ken Burns / Zoom Punch) → Media3 Effect.
         // SHORTS_PIECE intro/outro 는 별도 helper 가 default 한국어 카피로 TextureOverlay 생성.
@@ -1988,6 +1998,7 @@ class EditorViewModel(
                 bgmDuckingTrack = duckingTrack,
                 lutId = themeLutId,
                 lutIntensity = themeLutIntensity,
+                perSegmentLutIds = perSegmentLutIds,
                 videoFxEffects = videoFxEffects,
                 shortsOverlays = shortsOverlays,
                 onProgress = { p ->
