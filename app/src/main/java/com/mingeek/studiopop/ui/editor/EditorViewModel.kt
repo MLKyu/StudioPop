@@ -1974,8 +1974,11 @@ class EditorViewModel(
             ?: 1f
 
         // R6: effectStack 의 VIDEO_FX EffectInstance(Ken Burns / Zoom Punch) → Media3 Effect.
-        // Speed Ramp / SHORTS_PIECE 는 이번 라운드 미지원 — Resolver 가 자동으로 skip.
+        // SHORTS_PIECE intro/outro 는 별도 helper 가 default 한국어 카피로 TextureOverlay 생성.
+        // Speed Ramp 만 미지원 — Resolver 가 자동 skip.
         val videoFxEffects = com.mingeek.studiopop.data.editor.EffectStackVideoEffects
+            .build(state.effectStack, state.timeline)
+        val shortsOverlays = com.mingeek.studiopop.data.editor.EffectStackShortsOverlays
             .build(state.effectStack, state.timeline)
 
         viewModelScope.launch {
@@ -1986,6 +1989,7 @@ class EditorViewModel(
                 lutId = themeLutId,
                 lutIntensity = themeLutIntensity,
                 videoFxEffects = videoFxEffects,
+                shortsOverlays = shortsOverlays,
                 onProgress = { p ->
                     _uiState.update { s ->
                         if (s.phase is ExportPhase.Running) s.copy(phase = ExportPhase.Running(p))

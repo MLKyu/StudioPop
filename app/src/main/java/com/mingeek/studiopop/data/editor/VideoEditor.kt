@@ -137,6 +137,11 @@ class VideoEditor(
          * 자막/오버레이).
          */
         videoFxEffects: List<Effect> = emptyList(),
+        /**
+         * R6: SHORTS_PIECE 인트로/아웃트로 텍스트 오버레이. [EffectStackShortsOverlays.build]
+         * 결과를 호출 측이 미리 준비. 자막/짤 같은 일반 오버레이와 함께 OverlayEffect 에 합류.
+         */
+        shortsOverlays: List<TextureOverlay> = emptyList(),
     ): Result<File> = withContext(Dispatchers.Main) {
         runCatching {
             val effective = timeline.effectiveSegments()
@@ -230,7 +235,7 @@ class VideoEditor(
             val (frameW, frameH) = withContext(Dispatchers.IO) {
                 readFrameSize(effective.first().sourceUri)
             } ?: DEFAULT_FRAME_SIZE
-            val overlays = buildOverlayList(timeline, frameW, frameH)
+            val overlays = buildOverlayList(timeline, frameW, frameH) + shortsOverlays
             // 효과 체인 순서:
             //  1. LUT — raw 영상 픽셀의 색감 변환. 오버레이 가독성 보호 위해 가장 앞.
             //  2. videoFxEffects (Ken Burns / Zoom Punch) — 카메라 무브, 색감과 무관해 LUT 뒤.
