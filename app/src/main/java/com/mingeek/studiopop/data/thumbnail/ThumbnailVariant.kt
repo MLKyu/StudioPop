@@ -34,6 +34,16 @@ enum class SubjectEmphasis {
 /**
  * 한 썸네일 변형의 모든 시각 사양.
  * Composer 가 이걸 받아 1280×720 Bitmap 으로 그림.
+ *
+ * ### TODO — A/B 썸네일 자동 테스트 (외부 인증 + 비공식 API 필요)
+ * 현재는 [com.mingeek.studiopop.data.ai.AiAssist] 가 여러 [ThumbnailVariant] 를 생성해 사용자가
+ * 수동으로 1개 선택. YouTube 의 자동 A/B 테스트 (Test & Compare) 는 YouTube Studio 의 비공개
+ * Experiments API 만 지원 — 공식 Data API 에 미노출.
+ *  - 옵션 A: Studio 비공식 API reverse-engineer (TOS 위험, 권장 X)
+ *  - 옵션 B: 공식 `videos.update` 로 일정 시간마다 thumbnail 교체 + Analytics API 의 CTR 비교
+ *    스케줄러 구현 — WorkManager + ApiKeyStore 의 google.oauth.token 필요
+ *  - 옵션 C: 외부 서비스(TubeBuddy/VidIQ) 위임 — 사용자가 별도 가입
+ * 무료 라운드 스코프 밖. 일단 다중 변형 생성 + UX 의 manual pick 으로 유사 효과.
  */
 data class ThumbnailVariant(
     val id: String = UUID.randomUUID().toString(),
