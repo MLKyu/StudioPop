@@ -177,9 +177,14 @@ fun TimelineView(
                 }
             }
 
-            // 2) 텍스트 레이어 (상단 라인)
+            // 2) 텍스트 레이어 (상단 라인). 시간상 겹치는 항목은 stack-level 부여 →
+            // 오른쪽-아래 wedge 가 노출돼 둘 다 탭 가능 (hit-test 회피).
+            val textLayerStackLevels = remember(timeline.textLayers) {
+                assignStackLevels(timeline.textLayers.map { it.id to (it.sourceStartMs to it.sourceEndMs) })
+            }
             Box(modifier = Modifier.fillMaxHeight()) {
                 timeline.textLayers.forEach { layer ->
+                    val level = textLayerStackLevels[layer.id] ?: 0
                     OverlayBar(
                         id = layer.id,
                         text = layer.text.ifBlank { "텍스트" },
@@ -190,6 +195,7 @@ fun TimelineView(
                         topDp = TEXT_LAYER_BAR_TOP_DP.dp,
                         barColor = Color(0xFFFFB300),
                         isSelected = layer.id == selectedCaptionId,
+                        stackLevel = level,
                         onTap = { onTextLayerTap(layer.id) },
                         onResize = { s, e -> onTextLayerResize(layer.id, s, e) },
                         onTranslate = { d -> onTextLayerTranslate(layer.id, d) },
@@ -198,10 +204,16 @@ fun TimelineView(
             }
 
             // 3) 자막 막대 (하단 라인). 효과 적용된 자막은 ✨ prefix + 네온 톤 색으로 강조.
+            // 시간상 겹치는 자막은 stack-level 로 살짝 어긋나게 그려 hit-test 가 위쪽 자막에만
+            // 잡히던 문제 해결.
             val effectAccentColor = MaterialTheme.colorScheme.primary
+            val captionStackLevels = remember(timeline.captions) {
+                assignStackLevels(timeline.captions.map { it.id to (it.sourceStartMs to it.sourceEndMs) })
+            }
             Box(modifier = Modifier.fillMaxHeight()) {
                 timeline.captions.forEach { cap ->
                     val hasEffect = cap.id in effectiveCaptionIds
+                    val level = captionStackLevels[cap.id] ?: 0
                     OverlayBar(
                         id = cap.id,
                         text = if (hasEffect) "✨ ${cap.text.ifBlank { "…" }}"
@@ -214,6 +226,7 @@ fun TimelineView(
                         barColor = if (hasEffect) effectAccentColor.copy(alpha = 0.85f)
                             else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f),
                         isSelected = cap.id == selectedCaptionId,
+                        stackLevel = level,
                         onTap = { onCaptionTap(cap.id) },
                         onResize = { s, e -> onCaptionResize(cap.id, s, e) },
                         onTranslate = { d -> onCaptionTranslate(cap.id, d) },
@@ -549,19 +562,35 @@ private fun OverlayBar(
     onTap: () -> Unit,
     onResize: (startDeltaMs: Long, endDeltaMs: Long) -> Unit,
     onTranslate: (deltaMs: Long) -> Unit,
+    /**
+     * 시간상 겹치는 항목들끼리만 0,1,2… 로 부여. 0 이면 stagger 없음. 위 항목일수록 큰 값을
+     * 받아 leftDp 와 top 에 작은 offset, 우측 폭은 살짝 줄여 아래 항목의 우하단 wedge 가 노출됨.
+     */
+    stackLevel: Int = 0,
 ) {
     val density = LocalDensity.current
     val startOutputMs = timeline.mapSourceToOutput(sourceStartMs) ?: return
     val endOutputMs = timeline.mapSourceToOutput(sourceEndMs) ?: return
     if (endOutputMs <= startOutputMs) return
 
-    val widthDp = with(density) { ((endOutputMs - startOutputMs) * pxPerMs).toDp() }
-    val leftDp = with(density) { (startOutputMs * pxPerMs).toDp() }
+    val rawWidthDp = with(density) { ((endOutputMs - startOutputMs) * pxPerMs).toDp() }
+    val rawLeftDp = with(density) { (startOutputMs * pxPerMs).toDp() }
+
+    // 겹친 막대 stagger: 위 stack 일수록 오른쪽·아래로 살짝 이동, 폭은 그만큼 좁힘.
+    // 결과적으로 아래 막대의 좌상단 일부가 항상 클릭 가능하게 노출됨.
+    //
+    // 세로 offset 은 인접 lane 침범을 막도록 capped — 자막 lane bottom (CAPTION_TOP+BAR_HEIGHT=52)
+    // 다음 lane top (CUT_TOP=56) 사이 4dp 만 가용. STACK_TOP_STEP_DP=2 + cap=2 → max 4dp.
+    val visualTopLevel = stackLevel.coerceAtMost(MAX_TOP_STAGGER_LEVEL)
+    val stackShiftStart = (stackLevel * STACK_STEP_DP).dp
+    val stackShiftTop = (visualTopLevel * STACK_TOP_STEP_DP).dp
+    val widthDp = (rawWidthDp - stackShiftStart).coerceAtLeast(MIN_BAR_WIDTH_DP.dp)
+    val leftDp = rawLeftDp + stackShiftStart
     val canResize = widthDp > (HANDLE_WIDTH_DP * 2 + 8).dp
 
     Box(
         modifier = Modifier
-            .padding(start = leftDp, top = topDp)
+            .padding(start = leftDp, top = topDp + stackShiftTop)
             .height(BAR_HEIGHT_DP.dp)
             .width(widthDp)
             .clip(RoundedCornerShape(4.dp))
@@ -630,6 +659,42 @@ private fun ResizeHandle(
 }
 
 /**
+ * 시간상 겹치는 항목들끼리만 0,1,2… stack level 부여 (그리디 lane assignment). 같은 lane 안에서
+ * 두 막대가 시간 범위가 겹치면 위에 그려지는 항목은 더 큰 level 을 갖고 [OverlayBar] 가 stagger
+ * offset 으로 그려져 hit-test 가 위쪽 한 항목에만 집중되는 문제를 회피.
+ *
+ * 시작 시간 오름차순으로 처리해 lane 충돌을 결정. id 별로 일관된 결과를 반환 (입력이 정렬 안 돼도).
+ */
+internal fun assignStackLevels(
+    items: List<Pair<String, Pair<Long, Long>>>,
+): Map<String, Int> {
+    val out = mutableMapOf<String, Int>()
+    // 시작 시간 동률이면 종료 시간 짧은 쪽이 먼저 — 짧은 게 lane 0 에 들어가 긴 게 위로 stagger.
+    val sorted = items.sortedWith(
+        compareBy({ it.second.first }, { it.second.second - it.second.first })
+    )
+    val laneEnds = mutableListOf<Long>() // index = level, value = 그 level 의 마지막 endMs
+    sorted.forEach { (id, range) ->
+        val (start, end) = range
+        var assigned = -1
+        for (level in laneEnds.indices) {
+            if (start >= laneEnds[level]) {
+                assigned = level
+                break
+            }
+        }
+        if (assigned == -1) {
+            laneEnds.add(end)
+            assigned = laneEnds.lastIndex
+        } else {
+            laneEnds[assigned] = end
+        }
+        out[id] = assigned
+    }
+    return out
+}
+
+/**
  * R6 영상 효과 시각화 입력. EffectInstance 자체를 노출하지 않고 UI 가 필요한 만큼만 추려서
  * 받음 (TimelineView 가 EffectRegistry/EditorScreen 에 결합되지 않게).
  */
@@ -651,6 +716,14 @@ private const val TIMELINE_HEIGHT_LANDSCAPE_DP = 280
 private const val DIVIDER_HIT_WIDTH_DP = 14
 private const val BAR_HEIGHT_DP = 22
 private const val HANDLE_WIDTH_DP = 10
+/** 같은 lane 안에서 시간이 겹치는 막대의 가로 stagger offset 단위(dp). */
+private const val STACK_STEP_DP = 6
+/** 세로 stagger 단위(dp). 인접 lane 침범 방지로 가로 step 보다 작음. */
+private const val STACK_TOP_STEP_DP = 2
+/** 세로 stagger 가 cut lane 으로 새지 않도록 시각 레벨 cap. STACK_TOP_STEP_DP*cap ≤ 4dp 유지. */
+private const val MAX_TOP_STAGGER_LEVEL = 2
+/** Stack 후 줄어드는 폭이 너무 작아 탭 불가가 되지 않도록 하한. */
+private const val MIN_BAR_WIDTH_DP = 24
 private const val DONGLE_SIZE_DP = 18            // 플레이헤드 dongle 시각 지름
 private const val DONGLE_TOUCH_DP = 40           // 플레이헤드 dongle 터치 타깃 (WCAG min)
 private const val TEXT_LAYER_BAR_TOP_DP = 4      // 상단 라인

@@ -101,6 +101,10 @@ import com.mingeek.studiopop.ui.editor.components.PreviewMosaicOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewPlayer
 import com.mingeek.studiopop.ui.editor.components.PreviewStickerOverlay
 import com.mingeek.studiopop.ui.editor.components.PreviewTransitionOverlay
+import com.mingeek.studiopop.ui.editor.components.PreviewVideoFxBadges
+import com.mingeek.studiopop.ui.editor.components.IdentityCameraTransform
+import com.mingeek.studiopop.ui.editor.components.sampleCameraTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import com.mingeek.studiopop.ui.editor.components.SfxPreviewPlayer
 import com.mingeek.studiopop.ui.editor.components.TimelineFxBar
 import com.mingeek.studiopop.ui.editor.components.TimelineView
@@ -373,6 +377,14 @@ fun EditorScreen(
                                 indication = null,
                             ) { toolbarVisible = !toolbarVisible },
                     ) {
+                        // R7+: 활성 카메라 변환(Ken Burns / Zoom Punch) 을 PlayerView 박스에
+                        // graphicsLayer 로 적용 → 프리뷰에서 줌·팬이 즉시 보임. NDC center.x/y 는
+                        // [-1..1] viewport 중심 좌표라 (size/2) 곱해 픽셀로 변환. y 는 NDC(위 +) ↔
+                        // Compose(아래 +) 부호 뒤집기. export 의 CameraMatrixEffect 와 시각 결과 동일.
+                        val sourceTimeForFx = state.timeline.mapOutputToSource(state.playheadOutputMs)
+                            ?.second ?: state.playheadOutputMs
+                        val cam = sampleCameraTransform(state.effectStack, sourceTimeForFx)
+                            ?: IdentityCameraTransform
                         PreviewPlayer(
                             timeline = state.timeline,
                             onPositionChange = { output ->
@@ -389,7 +401,20 @@ fun EditorScreen(
                                     runtimeAspectState.value = newRatio
                                 }
                             },
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer(
+                                    scaleX = cam.scale,
+                                    scaleY = cam.scale,
+                                    translationX = -cam.scale * cam.center.x *
+                                        with(androidx.compose.ui.platform.LocalDensity.current) {
+                                            boxW.toPx() / 2f
+                                        },
+                                    translationY = cam.scale * cam.center.y *
+                                        with(androidx.compose.ui.platform.LocalDensity.current) {
+                                            boxH.toPx() / 2f
+                                        },
+                                ),
                         )
                         if (state.timeline.transitions.enabled) {
                             PreviewTransitionOverlay(
@@ -451,6 +476,8 @@ fun EditorScreen(
                             currentOutputMs = state.playheadOutputMs,
                             onCaptionAnchorChange = viewModel::onCaptionAnchorChange,
                             onTextLayerAnchorChange = viewModel::onTextLayerAnchorChange,
+                            onCaptionTap = viewModel::openCaptionEditorFor,
+                            onTextLayerTap = viewModel::openTextLayerEditorFor,
                             modifier = Modifier.fillMaxSize(),
                             excludeCaptionIds = effectiveCaptionIds,
                         )
@@ -475,6 +502,15 @@ fun EditorScreen(
                         PreviewFixedTemplateOverlay(
                             timeline = state.timeline,
                             currentOutputMs = state.playheadOutputMs,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        // R7+: 활성 영상 효과 배지 — Speed Ramp / LUT / 인트로·아웃트로 등 GL
+                        // 합성이 export 시에만 보이는 효과들도 "지금 적용 중" 임을 사용자에게 노출.
+                        PreviewVideoFxBadges(
+                            effectStack = state.effectStack,
+                            currentSourceMs = sourceTimeMs,
+                            designTokens = container.designTokens,
+                            selectedThemeId = state.selectedThemeId,
                             modifier = Modifier.fillMaxSize(),
                         )
                         if (state.seekRequest != null) {

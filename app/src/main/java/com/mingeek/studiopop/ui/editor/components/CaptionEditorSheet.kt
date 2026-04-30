@@ -1,6 +1,8 @@
 package com.mingeek.studiopop.ui.editor.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -14,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -22,6 +25,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -91,18 +95,42 @@ fun CaptionEditorSheet(
     var endMs by remember(item.id) { mutableLongStateOf(item.sourceEndMs) }
     var preset by remember(item.id) { mutableStateOf(item.style.preset) }
     var anchorY by remember(item.id) { mutableFloatStateOf(item.style.anchorY) }
+    var anchorX by remember(item.id) { mutableFloatStateOf(item.style.anchorX) }
     var sizeScale by remember(item.id) { mutableFloatStateOf(item.style.sizeScale) }
 
+    val onSaveClick = {
+        onSave(
+            item.copy(
+                text = text,
+                sourceStartMs = startMs,
+                sourceEndMs = endMs.coerceAtLeast(startMs + 100L),
+                style = CaptionStyle(
+                    preset = preset,
+                    anchorX = anchorX,
+                    anchorY = anchorY,
+                    sizeScale = sizeScale,
+                ),
+            )
+        )
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
+        // 본문은 verticalScroll, footer 는 Box.BottomCenter 로 고정.
+        // 본문 padding-bottom 으로 footer 가 내용 위에 겹치지 않게 공간 확보.
+        // 이 구조 덕분에 "키보드/긴 컨트롤 때문에 저장 버튼이 안 보인다" 케이스 사라짐.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding()                      // 키보드 높이만큼 여백 확보
-                .navigationBarsPadding()           // 제스처 바 아래 안전 영역
-                .verticalScroll(rememberScrollState()) // 내용이 키보드로 가려지면 스크롤로 도달
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .imePadding()
+                .navigationBarsPadding(),
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = FOOTER_RESERVE_DP),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             Text(title, style = MaterialTheme.typography.titleMedium)
 
             OutlinedTextField(
@@ -237,7 +265,20 @@ fun CaptionEditorSheet(
                 }
             }
 
-            Text("세로 위치 (${"%.2f".format(anchorY)})", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "가로 위치 (${"%.2f".format(anchorX)})  · 0=가운데",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Slider(
+                value = anchorX,
+                onValueChange = { anchorX = it },
+                valueRange = -1f..1f,
+            )
+
+            Text(
+                "세로 위치 (${"%.2f".format(anchorY)})  · -1=하단 / +1=상단",
+                style = MaterialTheme.typography.labelLarge,
+            )
             Slider(
                 value = anchorY,
                 onValueChange = { anchorY = it },
@@ -251,31 +292,45 @@ fun CaptionEditorSheet(
                 valueRange = 0.5f..3f,
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        onSave(
-                            item.copy(
-                                text = text,
-                                sourceStartMs = startMs,
-                                sourceEndMs = endMs.coerceAtLeast(startMs + 100L),
-                                style = CaptionStyle(
-                                    preset = preset,
-                                    anchorY = anchorY,
-                                    sizeScale = sizeScale,
-                                ),
-                            )
-                        )
-                    },
-                    modifier = Modifier.weight(1f),
-                ) { Text("저장") }
-                if (onDelete != null) {
+            Text(
+                "📍 미리보기에서 텍스트를 드래그해 위치 조정 가능",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            }
+
+            // Sticky footer — Box.BottomCenter 로 본문 스크롤과 무관하게 항상 화면 하단에 고정.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .background(MaterialTheme.colorScheme.surface),
+            ) {
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (onDelete != null) {
+                        OutlinedButton(
+                            onClick = onDelete,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("삭제") }
+                    }
                     OutlinedButton(
-                        onClick = onDelete,
+                        onClick = onDismiss,
                         modifier = Modifier.weight(1f),
-                    ) { Text("삭제") }
+                    ) { Text("취소") }
+                    Button(
+                        onClick = onSaveClick,
+                        modifier = Modifier.weight(1.4f),
+                    ) { Text("저장") }
                 }
             }
         }
     }
 }
+
+/** Sticky footer 가 차지하는 대략 높이. 본문 padding-bottom 으로 마지막 컨트롤이 가려지지 않도록 확보. */
+private val FOOTER_RESERVE_DP = 76.dp

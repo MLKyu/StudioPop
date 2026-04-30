@@ -890,21 +890,31 @@ class EditorViewModel(
     }
 
     /**
-     * 미리보기 세로 드래그 → anchorY 조정 (NDC -1..1).
+     * 미리보기 2D 드래그 → anchorX/anchorY 동시 조정 (NDC -1..1).
      */
-    fun onCaptionAnchorChange(id: String, newAnchorY: Float) {
+    fun onCaptionAnchorChange(id: String, newAnchorX: Float, newAnchorY: Float) {
         _uiState.update { state ->
             val cap = state.timeline.captions.firstOrNull { it.id == id } ?: return@update state
-            val clipped = newAnchorY.coerceIn(-1f, 1f)
-            state.copy(timeline = state.timeline.updateCaption(cap.copy(style = cap.style.copy(anchorY = clipped))))
+            val ax = newAnchorX.coerceIn(-1f, 1f)
+            val ay = newAnchorY.coerceIn(-1f, 1f)
+            state.copy(
+                timeline = state.timeline.updateCaption(
+                    cap.copy(style = cap.style.copy(anchorX = ax, anchorY = ay))
+                )
+            )
         }
     }
 
-    fun onTextLayerAnchorChange(id: String, newAnchorY: Float) {
+    fun onTextLayerAnchorChange(id: String, newAnchorX: Float, newAnchorY: Float) {
         _uiState.update { state ->
             val layer = state.timeline.textLayers.firstOrNull { it.id == id } ?: return@update state
-            val clipped = newAnchorY.coerceIn(-1f, 1f)
-            state.copy(timeline = state.timeline.updateTextLayer(layer.copy(style = layer.style.copy(anchorY = clipped))))
+            val ax = newAnchorX.coerceIn(-1f, 1f)
+            val ay = newAnchorY.coerceIn(-1f, 1f)
+            state.copy(
+                timeline = state.timeline.updateTextLayer(
+                    layer.copy(style = layer.style.copy(anchorX = ax, anchorY = ay))
+                )
+            )
         }
     }
 
