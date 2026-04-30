@@ -46,18 +46,68 @@ android {
         }
     }
 
+    // Release 사인이 아직 발급되지 않았으므로, signing 발급 전까지 임시로 debug keystore 로 release 를
+    // 서명 — APK 가 설치 가능한 상태를 유지해 R8/리소스 최적화 결과를 디바이스에서 직접 검증.
+    // signing 발급 시 새 signingConfigs { create("release") {...} } 를 추가하고
+    // buildTypes.release.signingConfig 만 교체하면 됨 (다른 release 설정은 그대로 사용).
     buildTypes {
         release {
+            // R8 코드 축소 + 난독화 + 최적화. 같이 적용해야 효과가 큼 — minify 만 켜고 shrink 끄면
+            // 사용 안 하는 res/asset 이 그대로 묶여 APK 가 부풀어오름.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // PNG 추가 압축 (기본값 true 지만 명시) — APK 사이즈 추가 절감.
+            isCrunchPngs = true
+            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+        debug {
+            // debug 는 dev 편의 우선 — minify/shrink 끄고 빠른 빌드 유지.
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            isShrinkResources = false
         }
     }
+
+    // R8 이 release 빌드 후 생성하는 매핑 파일을 outputs/mapping/release/ 에 보관.
+    // 크래시 리포트 스택트레이스 디오브퓨스케이션에 필요 — APK 와 함께 보관할 것.
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
         compose = true
+    }
+
+    // .so (native libs) 는 압축하지 않고 APK 에 그대로 두기 — 런타임 메모리 매핑 가능,
+    // 설치 시 압축 해제 단계 생략, 디스크 점유는 줄지만 APK 사이즈는 약간 커짐.
+    // android:extractNativeLibs="false" 를 매니페스트에 두지 않아도 AGP 8+ 기본값.
+    packaging {
+        resources {
+            // 흔한 META-INF 충돌 + 사용 안 하는 라이선스 파일 제거.
+            excludes += setOf(
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/*.kotlin_module",
+                "META-INF/DEPENDENCIES",
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "kotlin/**",
+                "kotlin-tooling-metadata.json",
+            )
+        }
+        jniLibs {
+            useLegacyPackaging = false
+            // 같은 .so 가 여러 의존성에서 충돌할 때 첫 항목 우선.
+            pickFirsts += setOf(
+                "**/libc++_shared.so",
+            )
+        }
     }
 }
 
